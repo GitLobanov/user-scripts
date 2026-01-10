@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name         Rulate Super-Инструмент v6.4 (Счетчик символов и Live-обновление)
+// @name         Rulate Super-Инструмент v6.4 (Счетчик символов и Live-обновление) - Mobile Friendly
 // @namespace    http://tampermonkey.net/
-// @version      6.4
-// @description  Умный отчет, интерактивное разделение глав, live-обновление, проверка на дубли, настройка прозрачности, чек-листы и гибкая группировка ошибок.
-// @author       LobanovKeanu & AI fix
+// @version      6.5
+// @description  Умный отчет, интерактивное разделение глав, live-обновление, проверка на дубли, настройка прозрачности, чек-листы и гибкая группировка ошибок. Адаптирован для мобильных устройств.
+// @author       LobanovKeanu & AI fix & Mobile Adaptation
 // @match        *://tl.rulate.ru/*
 // @require      https://unpkg.com/az@0.2.3/dist/az.min.js
 // @grant        GM_addStyle
@@ -83,6 +83,7 @@ GM_addStyle(`
         justify-content: space-between;
         align-items: center;
         border-bottom: 1px solid var(--border-color);
+        flex-shrink: 0; /* Не сжимать заголовок */
     }
     .rst-header-main { display: flex; align-items: center; gap: 25px; }
     .rst-header h3 { margin: 0; font-size: 1.1em; font-weight: 600; color: white; white-space: nowrap;}
@@ -154,7 +155,7 @@ GM_addStyle(`
         transition: border-color 0.2s, box-shadow 0.2s;
     }
     #rst-menu-container textarea:focus, #rst-menu-container input:focus { outline: none; border-color: var(--accent-color); box-shadow: 0 0 0 2px rgba(97, 175, 239, 0.3); }
-    #rst-menu-container textarea { flex-grow: 1; resize: vertical; }
+    #rst-menu-container textarea { flex-grow: 1; resize: vertical; min-height: 150px; }
 
     .rst-actions { display: flex; gap: 12px; flex-wrap: wrap; align-items: center; }
     .rst-actions button, .rst-btn-upload, .rst-btn-clear {
@@ -196,7 +197,7 @@ GM_addStyle(`
     .rst-success-message { color: var(--success-color); font-weight: bold; font-size: 1.2em; text-align: center; padding: 20px; }
     .rst-error-summary { color: var(--warning-color); margin-bottom: 15px; font-weight: bold; font-size: 1.1em; }
 
-    #fmt-report-block { margin-left: auto; font-size: 13px; color: var(--text-secondary); display: flex; gap: 20px; }
+    #fmt-report-block { margin-left: auto; font-size: 13px; color: var(--text-secondary); display: flex; gap: 20px; flex-wrap: wrap; }
     #fmt-report-block span { font-weight: 500; color: var(--text-primary); }
 
     .rst-btn-process { background-color: #2a6496; } .rst-btn-process:hover { background-color: #3b8bce; }
@@ -205,7 +206,7 @@ GM_addStyle(`
     .rst-btn-validate { background-color: var(--accent-color); } .rst-btn-validate:hover { background-color: var(--accent-hover); }
 
     /* --- Стили для Интерактивного Форматтера --- */
-    .rst-sub-tabs { display: flex; border-bottom: 1px solid var(--border-color); margin-bottom: 8px; }
+    .rst-sub-tabs { display: flex; border-bottom: 1px solid var(--border-color); margin-bottom: 8px; flex-wrap: wrap; }
     .rst-sub-tab { background: none; border: none; color: var(--text-secondary); padding: 8px 12px; cursor: pointer; font-size: 13px; border-bottom: 2px solid transparent; }
     .rst-sub-tab.rst-active { color: var(--accent-color); border-bottom-color: var(--accent-color); }
     .rst-sub-view-container { flex-grow: 1; position: relative; min-height: 0; }
@@ -214,9 +215,6 @@ GM_addStyle(`
     .rst-sub-view textarea { height: 100%; }
 
     .interactive-wrapper { display: flex; flex-grow: 1; min-height: 0; gap: 5px; }
-
-    .char-count-line { text-align: right; padding: 0 8px; white-space: pre; }
-    .char-count-line.is-chapter-header { color: var(--accent-color); font-weight: bold; }
 
     #fmt-interactive-view {
         height: 100%; overflow-y: auto; background-color: var(--bg-input);
@@ -240,6 +238,105 @@ GM_addStyle(`
     .summary-item { padding: 4px 8px; border-radius: 4px; margin-bottom: 4px; display: flex; justify-content: space-between; }
     .summary-item-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .summary-item-chars { color: var(--text-secondary); margin-left: 10px; flex-shrink: 0; }
+
+    /* --- АДАПТАЦИЯ ДЛЯ МОБИЛЬНЫХ УСТРОЙСТВ --- */
+    @media (max-width: 768px) {
+        #rst-open-btn {
+            top: auto;
+            bottom: 10px;
+            right: 10px;
+            padding: 12px 18px;
+            font-size: 16px;
+        }
+
+        #rst-menu-container {
+            width: 100%;
+            height: 100%;
+            top: 0;
+            left: 0;
+            transform: none;
+            border-radius: 0;
+            border: none;
+        }
+
+        .rst-header {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 12px;
+            cursor: default; /* Отключаем курсор перетаскивания */
+            border-radius: 0;
+        }
+
+        .rst-header-main {
+            flex-direction: column;
+            align-items: flex-start;
+            gap: 10px;
+            width: 100%;
+        }
+
+        .rst-header-controls {
+            width: 100%;
+            justify-content: space-between;
+        }
+
+        .rst-tabs {
+            flex-wrap: wrap;
+        }
+        .rst-tab {
+            padding: 10px 14px;
+        }
+
+        .rst-close-btn {
+            font-size: 32px;
+        }
+
+        .rst-body {
+            padding: 10px;
+            font-size: 16px; /* Увеличиваем базовый шрифт для читаемости */
+        }
+
+        .rst-row, .rst-settings-grid {
+            flex-direction: column;
+            gap: 15px; /* Уменьшаем отступ между блоками */
+            grid-template-columns: 1fr; /* Для grid-контейнеров */
+        }
+
+        .rst-col {
+             min-height: 200px; /* Даем минимальную высоту столбцам, чтобы контент не схлопывался */
+        }
+
+        .rst-controls {
+            grid-template-columns: 1fr; /* Все контролы в один столбец */
+        }
+
+        .rst-actions {
+            flex-direction: column;
+            align-items: stretch; /* Растягиваем кнопки на всю ширину */
+            gap: 10px;
+        }
+        
+        .rst-actions .rst-checkbox-group {
+            border-left: none;
+            padding-left: 0;
+            margin-left: 0;
+            flex-direction: column;
+            align-items: flex-start;
+        }
+
+        #rst-menu-container textarea {
+            min-height: 200px; /* Увеличиваем минимальную высоту текстовых полей */
+            font-size: 15px;
+        }
+        
+        .rst-label-group {
+            flex-wrap: wrap;
+            gap: 10px;
+        }
+
+        .interactive-wrapper {
+             flex-direction: column;
+        }
+    }
 `);
 
 // --- HTML структура ---
@@ -253,7 +350,7 @@ menu.id = 'rst-menu-container';
 menu.innerHTML = `
     <div class="rst-header">
         <div class="rst-header-main">
-             <h3>Rulate Super-Инструмент v6.4</h3>
+             <h3>Rulate Super-Инструмент v6.5</h3>
              <div class="rst-tabs">
                 <button class="rst-tab rst-active" data-view="formatter-view">Форматтер глав</button>
                 <button class="rst-tab" data-view="validator-view">Проверка текста</button>
@@ -392,7 +489,16 @@ tabs.forEach(tab => tab.addEventListener('click', () => {
     menu.querySelector(`#${tab.dataset.view}`).classList.add('rst-active');
 }));
 const header = menu.querySelector('.rst-header'); let isDragging = false, offsetX, offsetY;
-header.addEventListener('mousedown', e => { if (!['BUTTON', 'INPUT'].includes(e.target.tagName)) { isDragging = true; offsetX = e.clientX - menu.offsetLeft; offsetY = e.clientY - menu.offsetTop; menu.style.userSelect = 'none'; }});
+// Отключаем перетаскивание на мобильных устройствах
+header.addEventListener('mousedown', e => {
+    if (window.innerWidth <= 768) return;
+    if (!['BUTTON', 'INPUT', 'LABEL', 'SPAN'].includes(e.target.tagName)) {
+        isDragging = true;
+        offsetX = e.clientX - menu.offsetLeft;
+        offsetY = e.clientY - menu.offsetTop;
+        menu.style.userSelect = 'none';
+    }
+});
 document.addEventListener('mousemove', e => { if (isDragging) { menu.style.left = `${e.clientX - offsetX}px`; menu.style.top = `${e.clientY - offsetY}px`; } });
 document.addEventListener('mouseup', () => { isDragging = false; menu.style.userSelect = 'auto'; });
 const applyOpacity = (value) => { menu.style.opacity = value; };
@@ -434,10 +540,8 @@ document.querySelectorAll('.rst-btn-upload').forEach(button => {
     const reportBlock = document.getElementById('fmt-report-block');
     const interactiveView = document.getElementById('fmt-interactive-view');
     const summaryBlock = document.getElementById('fmt-summary-block');
-    // --- НОВОЕ: Чекбоксы верификации ---
     const checkFormatted = document.getElementById('fmt-check-formatted');
     const checkVerified = document.getElementById('fmt-check-verified');
-
 
     const chapterRegex = /^Глава\s+(\d+)([\.:])?\s*([^\r\n]*)/;
     let originalChapters = [];
@@ -462,7 +566,6 @@ document.querySelectorAll('.rst-btn-upload').forEach(button => {
         localStorage.setItem('formatter_addSpacing', addSpacingCheckbox.checked);
     };
 
-    // --- НОВОЕ: Логика управления кнопками скачивания ---
     const updateDownloadButtonState = () => {
         const isReady = checkFormatted.checked && checkVerified.checked;
         const buttons = [downloadTxtBtn, downloadMdBtn];
@@ -482,7 +585,6 @@ document.querySelectorAll('.rst-btn-upload').forEach(button => {
 
     checkFormatted.addEventListener('change', updateDownloadButtonState);
     checkVerified.addEventListener('change', updateDownloadButtonState);
-    // --- Конец новой логики ---
 
     const parseSourceText = () => {
         const lines = sourceTextarea.value.split('\n');
@@ -540,15 +642,13 @@ document.querySelectorAll('.rst-btn-upload').forEach(button => {
         } else {
             splitPoints.add(lineNumber);
         }
-        // Вызываем перерисовку интерактивного вида, чтобы обновить счетчики и маркеры
         renderInteractiveView();
-        // А затем пересчитываем результат
         recalculateAndRenderAll();
     };
 
     const recalculateAndRenderAll = () => {
         const offset = parseInt(offsetInput.value, 10) || 0;
-        const alignNumbers = alignNumbersCheckbox.checked; // <--- НОВАЯ ПРОВЕРКА
+        const alignNumbers = alignNumbersCheckbox.checked;
         const lines = sourceTextarea.value.split('\n');
         let tempChapters = JSON.parse(JSON.stringify(originalChapters));
         processedChapters = [];
@@ -579,7 +679,6 @@ document.querySelectorAll('.rst-btn-upload').forEach(button => {
         tempChapters.forEach((chap, index) => {
             let newTitle = chap.originalTitle;
             const baseTitle = getBaseTitle(chap.originalTitle);
-
             const prevBaseTitle = index > 0 ? getBaseTitle(tempChapters[index - 1].originalTitle) : null;
             const nextBaseTitle = index < tempChapters.length - 1 ? getBaseTitle(tempChapters[index + 1].originalTitle) : null;
 
@@ -591,15 +690,12 @@ document.querySelectorAll('.rst-btn-upload').forEach(button => {
 
             processedChapters.push({ ...chap, finalNumber: currentNumber, finalTitle: newTitle });
 
-            // --- ОБНОВЛЕННАЯ ЛОГИКА НУМЕРАЦИИ ---
             if (alignNumbers) {
-                currentNumber++; // Просто увеличиваем на 1, если включено выравнивание
+                currentNumber++;
             } else {
-                // Старая логика, учитывающая "прыжки" в нумерации
                 if (!chap.isSplitPart) {
                     const nextChap = tempChapters[index + 1];
                     if (nextChap && !nextChap.isSplitPart) {
-                         // Проверяем, что следующая глава не является частью той же, что и текущая (например, Глава 10(1) и Глава 10(2))
                         if (getBaseTitle(nextChap.originalTitle) !== getBaseTitle(chap.originalTitle)) {
                             currentNumber += (nextChap.originalNumber - chap.originalNumber);
                         } else {
@@ -646,7 +742,7 @@ document.querySelectorAll('.rst-btn-upload').forEach(button => {
 
         if (selectedMode === 'titles') {
             resultOutput = chaptersToProcess.map(c => `# [Глава ${c.finalNumber}. ${c.finalTitle}]`).join('\n');
-        } else { // 'replace' mode
+        } else {
             resultOutput = chaptersToProcess.map(c => {
                 const newHeader = `# [Глава ${c.finalNumber}. ${c.finalTitle}]`;
                 const body = c.content.replace(chapterRegex, '').trim();
@@ -659,9 +755,8 @@ document.querySelectorAll('.rst-btn-upload').forEach(button => {
             if (addSpacingCheckbox.checked) {
                 const lines = resultOutput.split('\n');
                 const newLines = [];
-                // --- ОБНОВЛЕННАЯ ЛОГИКА ---
                 const isDialogue = (line) => line.trim().startsWith('—');
-                const isListItem = (line) => /^\s*[\w\d\s-]+:\s+/.test(line.trim()); // Проверка на элементы списка типа "Имя: текст"
+                const isListItem = (line) => /^\s*[\w\d\s-]+:\s+/.test(line.trim());
 
                 for (let i = 0; i < lines.length; i++) {
                     newLines.push(lines[i]);
@@ -688,7 +783,7 @@ document.querySelectorAll('.rst-btn-upload').forEach(button => {
     };
 
     sourceTextarea.addEventListener('input', () => {
-        resetFinalChecks(); // Сброс чекбоксов при изменении текста
+        resetFinalChecks();
         initializeAll();
     });
     offsetInput.addEventListener('input', recalculateAndRenderAll);
@@ -706,11 +801,11 @@ document.querySelectorAll('.rst-btn-upload').forEach(button => {
     clearBtn.addEventListener('click', () => {
         sourceTextarea.value = '';
         resultTextarea.value = '';
-        resetFinalChecks(); // Сброс чекбоксов при очистке
+        resetFinalChecks();
         initializeAll();
     });
 
-    updateDownloadButtonState(); // Установить начальное состояние кнопок
+    updateDownloadButtonState();
 })();
 
 // --- ЛОГИКА ВАЛИДАТОРА ТЕКСТА ---
@@ -728,7 +823,6 @@ document.querySelectorAll('.rst-btn-upload').forEach(button => {
             grammar: document.getElementById('check-grammar')
         };
 
-    // --- Инициализация Az.js ---
     let azLoaded = false;
     const originalBtnText = processBtn.textContent;
 
@@ -765,13 +859,9 @@ document.querySelectorAll('.rst-btn-upload').forEach(button => {
     };
     const escapeRegExp = (string) => string.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
-    // --- ИСПРАВЛЕННАЯ ПРОВЕРКА ГРАММАТИКИ ---
     const checkGrammarErrors = (text, lineIdCounter) => {
         if (!azLoaded) return [];
         const errors = [];
-
-        // !!! ИСПРАВЛЕНИЕ ЗДЕСЬ !!!
-        // Сначала .done() превращает объект Az в обычный массив, потом .filter()
         const tokens = Az.Tokens(text).done().filter(t => t.type === Az.Tokens.WORD);
 
         for (let i = 0; i < tokens.length - 1; i++) {
