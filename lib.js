@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         RanobeLib Uploader V5.2 (Live Preview)
+// @name         RanobeLib Uploader V5.3 (Format Fix)
 // @namespace    http://tampermonkey.net/
-// @version      5.2
-// @description  Предпросмотр глав, отчет, настройки и современный UI
+// @version      5.3
+// @description  Поддержка формата "Глава 1 \n Текст", превью и отчет
 // @author       You
 // @match        *://ranobelib.me/*
 // @grant        GM_addStyle
@@ -57,7 +57,7 @@
             font-family: 'Segoe UI', Roboto, Helvetica, sans-serif;
             font-size: 14px; transition: opacity 0.2s, box-shadow 0.2s;
             overflow: hidden;
-            max-height: 90vh; /* Limit height */
+            max-height: 90vh;
         }
 
         /* --- Header (Draggable) --- */
@@ -127,9 +127,9 @@
         }
         #rl-input:focus { outline: 2px solid var(--rl-accent); border-color: transparent; }
 
-        /* --- Preview Area (NEW) --- */
+        /* --- Preview Area --- */
         #rl-preview-area {
-            display: none; /* Hidden by default */
+            display: none;
             background: var(--rl-bg-header);
             border: 1px solid var(--rl-border);
             border-radius: 6px;
@@ -200,7 +200,7 @@
         <div id="rl-window">
             <div id="rl-header">
                 <div class="rl-title">
-                    <span>🚀 RL Uploader V5.2</span>
+                    <span>🚀 RL Uploader V5.3</span>
                     <span id="rl-status-badge" class="rl-status-badge">IDLE</span>
                 </div>
                 <div class="rl-win-controls">
@@ -233,11 +233,9 @@
 
                 <div id="rl-logs"></div>
 
-                <textarea id="rl-input" placeholder="Вставьте текст глав...&#10;Разделитель: строка начинающаяся с 'Глава X'"></textarea>
+                <textarea id="rl-input" placeholder="Вставьте текст глав...&#10;Поддержка: 'Глава 1. Название' или просто 'Глава 1'"></textarea>
 
-                <div id="rl-preview-area">
-                    <!-- Сюда попадет список глав -->
-                </div>
+                <div id="rl-preview-area"></div>
             </div>
 
             <div id="rl-footer">
@@ -343,17 +341,17 @@
     floatBtn.onclick = () => { win.style.display = 'flex'; floatBtn.style.display = 'none'; };
     minimizeBtn.onclick = () => { win.style.display = 'none'; floatBtn.style.display = 'flex'; };
 
-    // --- ПАРСИНГ И PREVIEW (ОБНОВЛЕНО) ---
+    // --- ПАРСИНГ ---
 
     function cleanTitle(rawTitle) {
-        return rawTitle.replace(/^\s*Глава\s+\d+(\.\d+)?\.?\s*/i, '').trim();
+        // Убираем "Глава X", "Глава X.X", "Глава X."
+        return rawTitle.replace(/^\s*Глава\s+\d+(\.\d+)?\.?[-:.]?\s*/i, '').trim();
     }
 
     function cleanBody(rawBody) {
         return rawBody.split('\n').map(line => line.trim()).filter(line => line.length > 0).join('\n');
     }
 
-    // Универсальная функция парсинга
     function parseTextToChapters(text) {
         const chunks = text.split(/\n(?=Глава\s+\d)/i);
         const parsed = [];
@@ -364,7 +362,16 @@
             if (lines.length < 2) return;
 
             const rawTitleLine = lines.shift();
-            const title = cleanTitle(rawTitleLine);
+
+            // Получаем "чистое" название
+            let title = cleanTitle(rawTitleLine);
+
+            // FIX: Если после очистки названия нет (строка была просто "Глава 1"),
+            // используем полный заголовок как название
+            if (!title) {
+                title = rawTitleLine.trim();
+            }
+
             const body = cleanBody(lines.join('\n'));
 
             if (title && body) {
@@ -402,7 +409,7 @@
                         <div class="rl-preview-item">
                             <span class="rl-preview-title" title="${chap.fullTitle}">
                                 <span style="color:var(--rl-text-muted); margin-right:5px;">#${idx+1}</span>
-                                ${chap.fullTitle}
+                                ${chap.title} <!-- Показываем то, что будет вставлено -->
                             </span>
                             <span class="rl-preview-meta">${chap.body.length} симв.</span>
                         </div>
@@ -411,15 +418,13 @@
 
                 previewArea.innerHTML = html;
                 previewArea.style.display = 'block';
-                // Авто-скролл к превью
                 previewArea.scrollTop = 0;
             } else {
                 previewArea.style.display = 'none';
             }
-        }, 300); // 300ms delay
+        }, 300);
     });
 
-    // Функция запуска
     function startParsing() {
         const text = inputArea.value;
         if (!text.trim()) return addLog('Пустое поле ввода!', 'error');
@@ -437,14 +442,13 @@
             saveState();
             addLog(`Загружено глав: ${state.total}`, 'success');
 
-            // Скрываем превью и очищаем инпут при старте
             inputArea.value = '';
             previewArea.style.display = 'none';
 
             updateUI();
             processQueue();
         } else {
-            addLog('Не найдено глав. Формат: "Глава 1. Название"', 'error');
+            addLog('Не найдено глав. Формат: "Глава 1..."', 'error');
         }
     }
 
