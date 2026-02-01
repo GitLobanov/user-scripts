@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         Rulate Super-Инструмент v6.4 (Счетчик символов и Live-обновление)
+// @name         Translate Manager
 // @namespace    http://tampermonkey.net/
 // @version      6.4
 // @description  Умный отчет, интерактивное разделение глав, live-обновление, проверка на дубли, настройка прозрачности, чек-листы и гибкая группировка ошибок.
@@ -241,6 +241,42 @@ GM_addStyle(`
     .summary-item-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .summary-item-chars { color: var(--text-secondary); margin-left: 10px; flex-shrink: 0; }
 `);
+
+
+    // Находим все строки в теле таблицы
+    const rows = document.querySelectorAll('table.tablesorter tbody tr');
+
+    // Проходим по каждой строке
+    rows.forEach(row => {
+        // Находим первую ячейку (td) и ссылку в ней
+        const firstCell = row.querySelector('td:first-child');
+        const statLink = firstCell ? firstCell.querySelector('a[href*="/stat"]') : null;
+
+        if (statLink) {
+            // Создаем новую ссылку-кнопку
+            const bookLink = document.createElement('a');
+
+            // Убираем '/stat' из URL, чтобы получить ссылку на книгу
+            bookLink.href = statLink.href.replace('/stat', '');
+
+            // Добавляем класс, как вы просили
+            bookLink.className = 'support-link';
+
+            // Добавляем текст или иконку для кнопки
+            bookLink.textContent = '📖 Перейти '; // Можете изменить на "К книге", "Перейти" и т.д.
+
+            // Добавляем стили, чтобы кнопка выглядела аккуратно
+            bookLink.style.margin = '0px 8px';
+            bookLink.style.textDecoration = 'none';
+            bookLink.style.fontSize = '1.2em';
+            bookLink.style.border = '1px solid';
+            bookLink.style.borderRadius = '10%';
+            bookLink.style.padding = '5px';
+
+            // Вставляем новую кнопку перед ссылкой на статистику
+            firstCell.insertBefore(bookLink, statLink);
+        }
+    });
 
 // --- HTML структура ---
 const openBtn = document.createElement('button');
@@ -871,6 +907,7 @@ document.querySelectorAll('.rst-btn-upload').forEach(button => {
 
             if (checks.latin.checked && /[a-zA-Z]/.test(cleanedLine)) lineErrors.push({ id: errorIdCounter++, category: 'latin', message: `Найдена латиница: ${[...new Set(cleanedLine.match(/[a-zA-Z]/g))].join(', ')}` });
             if (checks.asian.checked && /[\u4e00-\u9fff\u3040-\u30ff\uac00-\ud7af]/.test(cleanedLine)) lineErrors.push({ id: errorIdCounter++, category: 'asian', message: `Найдены азиатские иероглифы`});
+            if (checks.asian.checked && /[\u0900-\u0dff\u0e00-\u0e7f]/.test(cleanedLine)) lineErrors.push({ id: errorIdCounter++, category: 'asian', message: `Найдены символы Южной Азии (бенгали, хинди и др.)`});
             if (checks.arabic.checked && /[\u0600-\u06ff\u0750-\u077f]/.test(cleanedLine)) lineErrors.push({ id: errorIdCounter++, category: 'arabic', message: `Найдены арабские символы`});
             if (checks.formatting.checked) {
                 if (/^\s*[а-яё]/.test(line)) lineErrors.push({ id: errorIdCounter++, category: 'formatting', message: "Строка начинается с маленькой буквы" });
