@@ -1,5 +1,5 @@
 // ==UserScript==
-// @name         📚 Book Downloader Pro v8.3 (True Shared Library)
+// @name         Book Downloader Pro v8.3
 // @namespace    http://tampermonkey.net/
 // @version      8.3
 // @description  Загрузчик книг. Без лимитов памяти (IndexedDB). Настоящая общая библиотека для всех сайтов. Поддержка: yeduge.com, nnttrr.com, 69shuba.com, 101kks.com, rulate, freewebnovel и др.
@@ -85,7 +85,7 @@ SELECTORS = { chapterTitle: 'span.chapter', chapterContent: 'div#article', nextC
 let state = { isScraping: false, isPaused: false, currentBookId: null };
 let currentBookInfo = null;
 let SESSION_KEY = null;
-let libraryState = { tab: 'active', search: '', sort: 'date_desc' };
+let libraryState = { tab: 'active', search: '', sort: 'date_desc', selectedSources: [] };
 let packSettings = {
     charLimit: 100000,
     splitEnabled: false,
@@ -218,6 +218,58 @@ GM_addStyle(`
     .bdp-chapter-item { display: flex; justify-content: space-between; align-items: center; padding: 10px; border-bottom: 1px solid #f0f0f0; }
     .bdp-chapter-item:last-child { border-bottom: none; }
     .bdp-chapter-title { flex-grow: 1; margin-right: 15px; font-size: 13px; }
+    .bdp-source-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 12px; padding-bottom: 8px; border-bottom: 1px solid #eee; }
+    .bdp-source-tag { font-size: 11px; padding: 4px 10px; border: 1px solid #ddd; border-radius: 15px; cursor: pointer; background: #fff; color: #666; transition: all 0.2s; user-select: none; }
+    .bdp-source-tag:hover { border-color: #aaa; color: #333; }
+    .bdp-source-tag.active { background: #007bff; color: white; border-color: #0056b3; box-shadow: 0 2px 5px rgba(0,123,255,0.3); }
+
+    /* Стиль для текущей выделенной книги */
+    .bdp-saved-book-item.highlight-current {
+        background-color: #f0f8ff !important; /* Светло-голубой фон */
+        border: 2px solid #007bff !important; /* Синяя рамка */
+        box-shadow: 0 0 10px rgba(0,123,255,0.2);
+    }
+    .bdp-saved-book-item.highlight-current::before {
+        content: "📍 Текущая книга";
+        display: block;
+        font-size: 10px;
+        font-weight: 700;
+        color: #007bff;
+        margin-bottom: 4px;
+        text-transform: uppercase;
+    }
+
+    #bdp-transfer-panel {
+        position: fixed; top: 0; right: -320px; width: 300px; height: 100vh;
+        background: #fff; z-index: 10005; box-shadow: -5px 0 15px rgba(0,0,0,0.1);
+        transition: right 0.3s ease; display: flex; flex-direction: column;
+    }
+    #bdp-transfer-panel.visible { right: 0; }
+    #bdp-transfer-header {
+        padding: 15px; background: #f8f9fa; border-bottom: 1px solid #ddd;
+        display: flex; justify-content: space-between; align-items: center;
+    }
+    #bdp-transfer-body { flex-grow: 1; overflow-y: auto; padding: 15px; }
+    .bdp-site-card {
+        border: 1px solid #eee; border-radius: 8px; padding: 12px; margin-bottom: 12px;
+        background: #fff; box-shadow: 0 2px 4px rgba(0,0,0,0.02);
+    }
+    .bdp-site-card.active-site { border-left: 4px solid #28a745; background: #f9fff9; }
+    .bdp-site-card.disabled-site { border-left: 4px solid #ccc; background: #fdfdfd; }
+    .bdp-site-name { font-weight: 700; font-size: 14px; margin-bottom: 8px; display: block; }
+    .bdp-site-actions { display: flex; gap: 5px; margin-top: 5px; }
+    .bdp-site-btn {
+        flex: 1; padding: 5px; font-size: 11px; border: none; border-radius: 4px;
+        cursor: pointer; color: white; font-weight: 600; text-align: center; text-decoration: none;
+    }
+    .btn-exp { background: #17a2b8; } .btn-exp:hover { background: #138496; }
+    .btn-imp { background: #ffc107; color: #333; } .btn-imp:hover { background: #e0a800; }
+    .btn-goto { background: #6c757d; } .btn-goto:hover { background: #5a6268; }
+    .bdp-site-btn:disabled { opacity: 0.5; cursor: not-allowed; filter: grayscale(1); }
+    #bdp-transfer-overlay {
+        display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        background: rgba(0,0,0,0.4); z-index: 10004; backdrop-filter: blur(2px);
+    }
 `);
 
 // --- УТИЛИТЫ ---
@@ -368,6 +420,19 @@ async function createUI() {
     const appDiv = document.createElement('div');
     appDiv.id = 'bdp-app';
     appDiv.innerHTML = `
+        <div id="bdp-transfer-overlay"></div>
+        <div id="bdp-transfer-panel">
+            <div id="bdp-transfer-header">
+                <h3 style="margin:0; font-size:15px;">Управление сайтами</h3>
+                <button id="bdp-transfer-close" style="border:none; bg:none; cursor:pointer; font-size:20px;">×</button>
+            </div>
+            <div id="bdp-transfer-body">
+                <p style="font-size:12px; color:#666; margin-bottom:15px;">
+                    Из-за защиты браузера скачивать книги можно только находясь на сайте, где они были созданы.
+                </p>
+                <div id="bdp-sites-list"></div>
+            </div>
+        </div>
         <div id="bdp-fab-container">
             <button id="bdp-fab-menu" class="bdp-fab" title="Меню">📚</button>
             <button id="bdp-fab-pause" class="bdp-fab" title="Пауза">⏸️</button>
@@ -387,12 +452,12 @@ async function createUI() {
                 <div class="bdp-section">
                     <div class="bdp-section-title">Библиотека</div>
                     <div class="bdp-tabs"><button class="bdp-tab active" data-tab="active">Читаемые</button><button class="bdp-tab" data-tab="bookmarks">⭐ Закладки</button><button class="bdp-tab" data-tab="finished">Завершенные</button></div>
+                    <div id="bdp-source-filters" class="bdp-source-tags"></div>
                     <div class="bdp-filters"><input type="text" id="bdp-search" class="bdp-input" placeholder="Поиск..."><select id="bdp-sort" class="bdp-input"><option value="date_desc">Новые</option><option value="date_asc">Старые</option><option value="name">А-Я</option><option value="count">Размер</option><option value="source">Сайт</option></select></div>
                     <ul id="bdp-saved-books-list"></ul>
-                    <div style="margin-top: 10px; padding-top: 10px; border-top: 1px dashed #ddd; display: flex; gap: 10px;">
-                        <button id="bdp-export-btn" class="bdp-btn" style="background:#6c757d; flex:1;">📤 Экспорт (Бэкап)</button>
-                        <button id="bdp-import-btn" class="bdp-btn" style="background:#6c757d; flex:1;">📥 Импорт</button>
-                        <input type="file" id="bdp-file-input" style="display:none" accept=".json">
+                    <div style="margin-top: 10px; padding-top: 10px; border-top: 1px dashed #ddd; display: flex; flex-direction: column; gap: 8px;">
+                        <!-- Старые кнопки оставим как "Общий бэкап", но добавим новую -->
+                        <button id="bdp-transfer-open-btn" class="bdp-btn" style="background: linear-gradient(to right, #6610f2, #6f42c1); width:100%;">🔄 Перенос данных (По сайтам)</button>
                     </div>
                 </div>
             </div>
@@ -459,11 +524,6 @@ async function createUI() {
     document.getElementById('bdp-view-mode-chapters').onclick = () => switchModalView('chapters');
     document.getElementById('bdp-chapter-search-input').oninput = refreshPacksUI;
 
-
-    document.getElementById('bdp-export-btn').onclick = exportLibrary;
-    document.getElementById('bdp-import-btn').onclick = () => document.getElementById('bdp-file-input').click();
-    document.getElementById('bdp-file-input').onchange = importLibrary;
-
     // Split settings events
     const splitToggle = document.getElementById('bdp-split-settings-toggle');
     splitToggle.addEventListener('toggle', () => {
@@ -477,6 +537,22 @@ async function createUI() {
 
     // Draggable
     const panel = document.getElementById('bdp-panel'), header = document.getElementById('bdp-header'); let isDown=false, off=[0,0]; header.onmousedown=(e)=>{isDown=true;off=[panel.offsetLeft-e.clientX,panel.offsetTop-e.clientY];}; document.onmouseup=()=>{isDown=false;}; document.onmousemove=(e)=>{if(isDown){panel.style.left=(e.clientX+off[0])+'px';panel.style.top=(e.clientY+off[1])+'px'; panel.style.right='auto'; panel.style.bottom='auto';}};
+
+    const transferPanel = document.getElementById('bdp-transfer-panel');
+    const transferOverlay = document.getElementById('bdp-transfer-overlay');
+
+    document.getElementById('bdp-transfer-open-btn').onclick = () => {
+        renderTransferList(); // Функция будет ниже
+        transferPanel.classList.add('visible');
+        transferOverlay.style.display = 'block';
+    };
+
+    const closeTransfer = () => {
+        transferPanel.classList.remove('visible');
+        transferOverlay.style.display = 'none';
+    };
+    document.getElementById('bdp-transfer-close').onclick = closeTransfer;
+    document.getElementById('bdp-transfer-overlay').onclick = closeTransfer;
 
     renderLibrary();
 }
@@ -504,6 +580,169 @@ async function init() {
         document.getElementById('bdp-start-btn').textContent = "Книга не найдена";
     }
 }
+
+  async function renderTransferList() {
+    const list = document.getElementById('bdp-sites-list');
+    list.innerHTML = 'Загрузка...';
+
+    const libraryCache = await getLibraryCache();
+    const books = Object.values(libraryCache);
+
+    // Собираем уникальные домены из библиотеки
+    const domainsMap = {};
+    books.forEach(book => {
+        try {
+            const hostname = new URL(book.url).hostname;
+            if (!domainsMap[hostname]) {
+                domainsMap[hostname] = { count: 0, url: book.url }; // Сохраняем одну ссылку для перехода
+            }
+            domainsMap[hostname].count++;
+        } catch(e) {}
+    });
+
+    list.innerHTML = '';
+    const currentHost = window.location.hostname;
+
+    if (Object.keys(domainsMap).length === 0) {
+        list.innerHTML = '<div style="text-align:center; color:#777">Библиотека пуста</div>';
+        return;
+    }
+
+    for (const [domain, data] of Object.entries(domainsMap)) {
+        const isCurrent = currentHost.includes(domain) || domain.includes(currentHost); // Простая проверка вхождения
+
+        const card = document.createElement('div');
+        card.className = `bdp-site-card ${isCurrent ? 'active-site' : 'disabled-site'}`;
+
+        // HTML для кнопок
+        let buttonsHtml = '';
+        if (isCurrent) {
+            buttonsHtml = `
+                <button class="bdp-site-btn btn-exp" data-domain="${domain}">📤 Экспорт (${data.count})</button>
+                <button class="bdp-site-btn btn-imp" data-domain="${domain}">📥 Импорт</button>
+                <input type="file" class="site-import-input" style="display:none" accept=".json">
+            `;
+        } else {
+            buttonsHtml = `
+                <button class="bdp-site-btn btn-exp" disabled title="Недоступно с текущего сайта">📤 Экспорт</button>
+                <button class="bdp-site-btn btn-imp" disabled title="Недоступно с текущего сайта">📥 Импорт</button>
+                <a href="${data.url}" class="bdp-site-btn btn-goto">Перейти на сайт ➜</a>
+            `;
+        }
+
+        card.innerHTML = `
+            <span class="bdp-site-name">${domain} ${isCurrent ? '<span style="color:green;font-size:10px;margin-left:5px;">(Текущий)</span>' : ''}</span>
+            <div style="font-size:11px; color:#555;">Книг в базе: ${data.count}</div>
+            <div class="bdp-site-actions">${buttonsHtml}</div>
+        `;
+
+        list.appendChild(card);
+
+        // Навешиваем события только если активен
+        if (isCurrent) {
+            const expBtn = card.querySelector('.btn-exp');
+            const impBtn = card.querySelector('.btn-imp');
+            const fileInput = card.querySelector('.site-import-input');
+
+            expBtn.onclick = () => exportSiteData(domain);
+            impBtn.onclick = () => fileInput.click();
+            fileInput.onchange = (e) => importSiteData(e, domain);
+        }
+    }
+}
+
+async function exportSiteData(targetDomain) {
+    const libraryCache = await getLibraryCache();
+    const exportData = {
+        version: '8.3',
+        sourceDomain: targetDomain,
+        timestamp: Date.now(),
+        books: {}
+    };
+
+    let count = 0;
+
+    // Проходимся по библиотеке и ищем книги этого домена
+    for (const [id, meta] of Object.entries(libraryCache)) {
+        try {
+            if (new URL(meta.url).hostname === targetDomain) {
+                // Пытаемся достать полные данные из IndexedDB
+                // Т.к. мы находимся на правильном домене, db.get(id) должен вернуть данные
+                const fullBook = await db.get(id);
+                if (fullBook) {
+                    exportData.books[id] = fullBook;
+                    count++;
+                }
+            }
+        } catch (e) { console.error(e); }
+    }
+
+    if (count === 0) {
+        alert('Не найдено полных данных книг для этого домена в локальном хранилище.');
+        return;
+    }
+
+    const jsonString = JSON.stringify(exportData);
+    const blob = new Blob([jsonString], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `backup_${targetDomain}_${new Date().toISOString().slice(0,10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    alert(`Экспортировано книг: ${count}`);
+}
+
+async function importSiteData(e, targetDomain) {
+    const file = e.target.files[0];
+    if (!file) return;
+
+    const reader = new FileReader();
+    reader.onload = async (event) => {
+        try {
+            const data = JSON.parse(event.target.result);
+
+            // Валидация
+            if (!data.books) throw new Error("Неверный формат файла");
+
+            // Если в файле указан домен, можно предупредить, если он не совпадает (опционально)
+            if (data.sourceDomain && data.sourceDomain !== targetDomain) {
+                if(!confirm(`Файл создан для ${data.sourceDomain}, а вы импортируете в ${targetDomain}. Продолжить?`)) return;
+            }
+
+            let importedCount = 0;
+            const currentCache = await getLibraryCache();
+
+            for (const [id, bookData] of Object.entries(data.books)) {
+                // 1. Сохраняем "тяжелые" данные в IndexedDB (доступно, т.к. мы на нужном домене)
+                await db.set(id, bookData);
+
+                // 2. Обновляем мета-кэш (общая библиотека)
+                currentCache[id] = {
+                    title: bookData.title,
+                    url: bookData.url,
+                    chapterCount: bookData.chapters ? bookData.chapters.length : 0,
+                    updated: bookData.updated || Date.now(),
+                    isFinished: !!bookData.isFinished,
+                    isBookmarked: currentCache[id]?.isBookmarked || false
+                };
+                importedCount++;
+            }
+
+            await setLibraryCache(currentCache);
+            alert(`Успешно импортировано книг: ${importedCount}`);
+            renderTransferList(); // Обновить список
+            renderLibrary(); // Обновить главную библиотеку
+
+        } catch (err) {
+            alert("Ошибка импорта: " + err.message);
+        }
+    };
+    reader.readAsText(file);
+    e.target.value = '';
+}
+
 function setupExistingBookUI(book) { document.getElementById('bdp-book-info-block').style.display = 'block'; document.getElementById('bdp-info-title').textContent = book.title; document.getElementById('bdp-info-id').textContent = book.id; document.getElementById('bdp-start-btn').textContent = "Продолжить загрузку"; document.getElementById('bdp-manual-input').style.display = 'none'; updateStats(book); }
 function setupNewBookUI(id, suggestedTitle = null) { document.getElementById('bdp-book-info-block').style.display = 'block'; document.getElementById('bdp-info-title').textContent = "Новая книга"; document.getElementById('bdp-info-id').textContent = id; document.getElementById('bdp-manual-input').style.display = 'block'; document.getElementById('bdp-start-btn').textContent = "Сохранить и начать"; if (suggestedTitle) { document.getElementById('bdp-input-title').value = suggestedTitle; document.getElementById('bdp-info-title').textContent = suggestedTitle; } }
 
@@ -650,34 +889,118 @@ function updateStats(book) { if(!book) return; document.getElementById('bdp-stat
 // --- БИБЛИОТЕКА И МЕНЕДЖЕР ПЕРЕВОДОВ ---
 async function renderLibrary() {
     const list = document.getElementById('bdp-saved-books-list');
-    list.innerHTML = '...';
+    const tagsContainer = document.getElementById('bdp-source-filters');
+    list.innerHTML = '<li style="padding:10px;text-align:center;color:#999">Загрузка...</li>';
 
     const libraryCache = await getLibraryCache();
+    // Превращаем кэш в массив
     let books = Object.entries(libraryCache).map(([id, meta]) => ({ id, ...meta }));
 
-    if (libraryState.tab === 'bookmarks') { books = books.filter(b => b.isBookmarked); } else { const isFinTab = libraryState.tab === 'finished'; books = books.filter(b => !!b.isFinished === isFinTab); }
-    if (libraryState.search) { books = books.filter(b => b.title.toLowerCase().includes(libraryState.search.toLowerCase())); }
-    books.sort((a, b) => { const s = libraryState.sort; if (s === 'date_desc') return (b.updated || 0) - (a.updated || 0); if (s === 'date_asc') return (a.updated || 0) - (b.updated || 0); if (s === 'name') return a.title.localeCompare(b.title); if (s === 'count') return b.chapterCount - a.chapterCount; if (s === 'source') return getDomainTag(a.url).localeCompare(getDomainTag(b.url)); return 0; });
+    // --- 1. ЛОГИКА ТЕГОВ ИСТОЧНИКОВ ---
 
+    // Сначала фильтруем по табам (Читаемые/Закладки/Завершенные)
+    if (libraryState.tab === 'bookmarks') {
+        books = books.filter(b => b.isBookmarked);
+    } else {
+        const isFinTab = libraryState.tab === 'finished';
+        books = books.filter(b => !!b.isFinished === isFinTab);
+    }
+
+    // Собираем домены для кнопок
+    const allDomains = [...new Set(books.map(b => getDomainTag(b.url)))].sort();
+
+    // Рендерим кнопки тегов
+    tagsContainer.innerHTML = '';
+    if (allDomains.length > 0) {
+        allDomains.forEach(domain => {
+            const tag = document.createElement('span');
+            tag.className = `bdp-source-tag ${libraryState.selectedSources.includes(domain) ? 'active' : ''}`;
+            tag.textContent = domain;
+            tag.onclick = () => {
+                // Мульти-выбор: если уже есть - убираем, если нет - добавляем
+                if (libraryState.selectedSources.includes(domain)) {
+                    libraryState.selectedSources = libraryState.selectedSources.filter(s => s !== domain);
+                } else {
+                    libraryState.selectedSources.push(domain);
+                }
+                renderLibrary(); // Перерисовка
+            };
+            tagsContainer.appendChild(tag);
+        });
+        // Кнопка сброса, если что-то выбрано
+        if (libraryState.selectedSources.length > 0) {
+            const clearBtn = document.createElement('span');
+            clearBtn.className = 'bdp-source-tag';
+            clearBtn.style.color = '#dc3545';
+            clearBtn.style.borderColor = '#dc3545';
+            clearBtn.textContent = '✕ Сброс';
+            clearBtn.onclick = () => { libraryState.selectedSources = []; renderLibrary(); };
+            tagsContainer.appendChild(clearBtn);
+        }
+        tagsContainer.style.display = 'flex';
+    } else {
+        tagsContainer.style.display = 'none';
+    }
+
+    // --- 2. ФИЛЬТРАЦИЯ ПО ИСТОЧНИКАМ И ПОИСКУ ---
+    // Фильтр по выбранным тегам
+    if (libraryState.selectedSources.length > 0) {
+        books = books.filter(b => libraryState.selectedSources.includes(getDomainTag(b.url)));
+    }
+
+    // Фильтр по поиску
+    if (libraryState.search) {
+        books = books.filter(b => b.title.toLowerCase().includes(libraryState.search.toLowerCase()));
+    }
+
+    // --- 3. СОРТИРОВКА ---
+    books.sort((a, b) => {
+        const s = libraryState.sort;
+        if (s === 'date_desc') return (b.updated || 0) - (a.updated || 0);
+        if (s === 'date_asc') return (a.updated || 0) - (b.updated || 0);
+        if (s === 'name') return a.title.localeCompare(b.title);
+        if (s === 'count') return b.chapterCount - a.chapterCount;
+        if (s === 'source') return getDomainTag(a.url).localeCompare(getDomainTag(b.url));
+        return 0;
+    });
+
+    // --- 4. ПОДНЯТИЕ ТЕКУЩЕЙ КНИГИ (HIGHLIGHT) ---
+    // Проверяем, определена ли текущая книга
+    if (currentBookInfo && currentBookInfo.id) {
+        const currentId = currentBookInfo.id;
+        const idx = books.findIndex(b => b.id === currentId);
+
+        // Если книга найдена в текущем списке
+        if (idx > -1) {
+            const [currentBook] = books.splice(idx, 1); // Вырезаем её
+            books.unshift(currentBook); // Вставляем в самое начало
+        }
+    }
+
+    // --- 5. РЕНДЕРИНГ СПИСКА ---
     list.innerHTML = '';
-    if (books.length === 0) { list.innerHTML = '<li style="padding:10px;text-align:center;color:#999">Пусто</li>'; return; }
+    if (books.length === 0) {
+        list.innerHTML = '<li style="padding:10px;text-align:center;color:#999">Пусто</li>';
+        return;
+    }
 
     books.forEach(b => {
         const li = document.createElement('li');
         const domain = getDomainTag(b.url);
+
+        // Определение, является ли этот сайт текущим (для кнопок действий)
         let isCurrentHost = false;
         try {
             const bookHostname = new URL(b.url).hostname;
-            if (HOST.includes('syosetu.com') && bookHostname.includes('syosetu.com')) {
-                isCurrentHost = true;
-            } else {
-                isCurrentHost = HOST.includes(domain) || (HOST.includes('rulate.ru') && domain.includes('rulate'));
-            }
-        } catch (e) {
-            isCurrentHost = HOST.includes(domain);
-        }
+            if (HOST.includes('syosetu.com') && bookHostname.includes('syosetu.com')) isCurrentHost = true;
+            else isCurrentHost = HOST.includes(domain) || (HOST.includes('rulate.ru') && domain.includes('rulate'));
+        } catch (e) { isCurrentHost = HOST.includes(domain); }
 
-        li.className = `bdp-saved-book-item ${!isCurrentHost ? 'disabled-item' : ''}`;
+        // Проверка: является ли книга текущей открытой страницей
+        const isActuallyCurrentBook = (currentBookInfo && currentBookInfo.id === b.id);
+
+        // Классы CSS
+        li.className = `bdp-saved-book-item ${!isCurrentHost ? 'disabled-item' : ''} ${isActuallyCurrentBook ? 'highlight-current' : ''}`;
 
         const bookmarkClass = b.isBookmarked ? 'bookmarked' : '';
         const bookmarkIcon = b.isBookmarked ? '⭐' : '☆';
@@ -689,10 +1012,20 @@ async function renderLibrary() {
             actionsHTML = `<a href="${b.url}" target="_blank" class="bdp-action-btn btn-green" style="flex-grow:1;">Перейти на сайт</a>`;
         }
 
-        li.innerHTML = `<div class="bdp-book-header"><a href="${b.url}" target="_blank" class="bdp-book-title">${b.title}</a><span class="bdp-book-tag">${domain}</span><button class="btn-icon btn-bookmark ${bookmarkClass}" data-id="${b.id}" title="Добавить в закладки">${bookmarkIcon}</button><button class="btn-icon edit-url-btn" data-id="${b.id}" title="Править ссылку">✏️</button></div><div style="font-size:11px;color:#777; margin-bottom:5px;">Главы: ${b.chapterCount} | ID: ${b.id.replace('book_','')}</div><div class="bdp-book-actions">${actionsHTML}</div>`;
+        li.innerHTML = `
+            <div class="bdp-book-header">
+                <a href="${b.url}" target="_blank" class="bdp-book-title">${b.title}</a>
+                <span class="bdp-book-tag">${domain}</span>
+                <button class="btn-icon btn-bookmark ${bookmarkClass}" data-id="${b.id}" title="Добавить в закладки">${bookmarkIcon}</button>
+                <button class="btn-icon edit-url-btn" data-id="${b.id}" title="Править ссылку">✏️</button>
+            </div>
+            <div style="font-size:11px;color:#777; margin-bottom:5px;">Главы: ${b.chapterCount} | ID: ${b.id.replace('book_','')}</div>
+            <div class="bdp-book-actions">${actionsHTML}</div>
+        `;
         list.appendChild(li);
     });
 
+    // Навешиваем события (как и было)
     list.querySelectorAll('.view-btn').forEach(b => b.onclick = viewBook);
     list.querySelectorAll('.dl-btn').forEach(b => b.onclick = downloadBook);
     list.querySelectorAll('.arc-btn').forEach(b => b.onclick = toggleArchive);
@@ -899,109 +1232,6 @@ function showSplitReport() {
     } else {
         alert('Отчет о делении глав:\n\n' + splitReportLog.join('\n'));
     }
-}
-
-
-  async function exportLibrary() {
-    const btn = document.getElementById('bdp-export-btn');
-    const originalText = btn.textContent;
-    btn.textContent = "⏳ Собираю данные...";
-    btn.disabled = true;
-
-    try {
-        // 1. Получаем мета-данные (список книг)
-        const libraryCache = await getLibraryCache();
-        const exportData = {
-            version: '8.3',
-            timestamp: Date.now(),
-            settings: packSettings,
-            library: libraryCache,
-            books: {}
-        };
-
-        // 2. Проходимся по всем книгам и достаем полные данные из IndexedDB
-        // Это сохранит и текст, и инфу о зафиксированных главах
-        const bookIds = Object.keys(libraryCache);
-        for (let id of bookIds) {
-            const bookData = await db.get(id);
-            if (bookData) {
-                exportData.books[id] = bookData;
-            }
-        }
-
-        // 3. Создаем файл для скачивания
-        const jsonString = JSON.stringify(exportData);
-        const blob = new Blob([jsonString], { type: 'application/json' });
-        const url = URL.createObjectURL(blob);
-
-        const a = document.createElement('a');
-        a.href = url;
-        const dateStr = new Date().toISOString().slice(0,10);
-        a.download = `bdp_backup_${dateStr}.json`;
-        document.body.appendChild(a);
-        a.click();
-        document.body.removeChild(a);
-        URL.revokeObjectURL(url);
-
-        alert(`Бэкап создан! Книг: ${bookIds.length}.`);
-    } catch (e) {
-        console.error(e);
-        alert("Ошибка при экспорте: " + e.message);
-    } finally {
-        btn.textContent = originalText;
-        btn.disabled = false;
-    }
-}
-
-async function importLibrary(e) {
-    const file = e.target.files[0];
-    if (!file) return;
-
-    if (!confirm("Внимание! Импорт объединит данные.\nЕсли книга с таким ID уже есть, она будет перезаписана (включая прогресс).\nПродолжить?")) {
-        e.target.value = ''; // сброс
-        return;
-    }
-
-    const reader = new FileReader();
-    reader.onload = async (event) => {
-        try {
-            const data = JSON.parse(event.target.result);
-
-            // 1. Восстанавливаем настройки
-            if (data.settings) {
-                packSettings = { ...packSettings, ...data.settings };
-                savePackSettings();
-            }
-
-            // 2. Объединяем кэш библиотеки
-            if (data.library) {
-                const currentCache = await getLibraryCache();
-                const mergedCache = { ...currentCache, ...data.library };
-                await setLibraryCache(mergedCache);
-            }
-
-            // 3. Восстанавливаем книги в IndexedDB
-            if (data.books) {
-                let count = 0;
-                for (const [id, bookData] of Object.entries(data.books)) {
-                    await db.set(id, bookData);
-                    count++;
-                }
-                alert(`Успешно импортировано книг: ${count}`);
-            } else {
-                alert("В файле нет данных о книгах.");
-            }
-
-            // Обновляем интерфейс
-            await renderLibrary();
-
-        } catch (err) {
-            console.error(err);
-            alert("Ошибка при чтении файла: " + err.message);
-        }
-    };
-    reader.readAsText(file);
-    e.target.value = ''; // сброс инпута
 }
 
 
