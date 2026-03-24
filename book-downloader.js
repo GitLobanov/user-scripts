@@ -19,7 +19,13 @@
 // @match        *://read-novel.com/*
 // @match        *://www.drxsw.com/*
 // @match        *://www.shuhaixsw.com/*
+// @match        *://quanben5.com/*
+// @match        *://www.quanben5.com/*
 // @match        *://www.kelexs.com/*
+// @match        *://sudugu.org/*
+// @match        *://www.sudugu.org/*
+// @match        *://pinellianovel.com/*
+// @match        *://www.pinellianovel.com/*
 // @require      https://cdn.jsdelivr.net/npm/idb-keyval@6/dist/umd.js
 // @grant        GM_addStyle
 // @grant        GM_setClipboard
@@ -80,7 +86,33 @@ SELECTORS = { chapterTitle: 'span.chapter', chapterContent: 'div#article', nextC
         chapterContent: '.p-novel__body',
         nextChapterLink: 'a.c-pager__item--next'
     };
-  }  else { SELECTORS = { chapterTitle: 'h1', chapterContent: 'article, .chapter-content, .text', nextChapterLink: 'a.next, a.next-chapter' }; }
+  } else if (HOST.includes('quanben5.com')) {
+    SELECTORS = {
+        chapterTitle: '.title1',
+        chapterContent: '#content',
+        nextChapterLink: '#page_next a'
+    };
+  } else if (HOST.includes('quanben5.com')) {
+    SELECTORS = {
+        chapterTitle: '.title1',
+        chapterContent: '#content',
+        nextChapterLink: '#page_next a'
+    };
+  } else if (HOST.includes('sudugu.org')) {
+    SELECTORS = {
+        chapterTitle: '.submenu h1',
+        chapterContent: '.con',
+        nextChapterLink: '.prenext span:last-child a'
+    };
+  } else if (HOST.includes('pinellianovel.com')) {
+    SELECTORS = {
+        chapterTitle: 'h1.reader-header__title',
+        chapterContent: 'article#article',
+        nextChapterLink: 'a#next_url'
+    };
+  } else {
+    SELECTORS = { chapterTitle: 'h1', chapterContent: 'article, .chapter-content, .text', nextChapterLink: 'a.next, a.next-chapter' };
+  }
 // --- ГЛОБАЛЬНОЕ СОСТОЯНИЕ ---
 let state = { isScraping: false, isPaused: false, currentBookId: null };
 let currentBookInfo = null;
@@ -388,6 +420,23 @@ function identifyBook() {
       }
   }
 
+  if (HOST.includes('quanben5.com')) {
+      const match = path.match(/\/n\/([a-zA-Z0-9_-]+)\//);
+      if (match) {
+          const id = match[1];
+          let title = null;
+          // Попытка вытащить название книги из title или других элементов, если они есть.
+          // Если скрипт не найдет - он просто спросит название при первом сохранении.
+          return {
+              id: 'book_quanben5_' + id,
+              // Ссылка на страницу оглавления
+              url: `https://www.quanben5.com/n/${id}/xiaoshuo.html`,
+              isAuto: true,
+              title: title
+          };
+      }
+  }
+
   if (HOST.includes('kelexs.com')) {
         // Находим ссылку на книгу в блоке .about
         const bookLink = document.querySelector('.about dl dd a[href*="/book/"]');
@@ -408,6 +457,46 @@ function identifyBook() {
             };
         }
     }
+
+
+   if (HOST.includes('sudugu.org')) {
+      // Ищем ID книги в URL (например, /5420/)
+      const match = path.match(/\/(\d+)\//);
+      if (match) {
+          const id = match[1];
+          let title = null;
+          // Название книги лежит в ссылке внутри заголовка ( <a href="/5420/">Название</a> )
+          const titleLink = document.querySelector('.submenu h1 a');
+          if (titleLink) {
+              title = titleLink.textContent.trim();
+          }
+          return {
+              id: 'book_sudugu_' + id,
+              url: `https://www.sudugu.org/${id}/`, // Ссылка на оглавление
+              isAuto: true,
+              title: title
+          };
+      }
+  }
+
+
+  if (HOST.includes('pinellianovel.com')) {
+      const match = path.match(/\/books\/([a-zA-Z0-9]+)/);
+      if (match) {
+          const id = match[1];
+          let title = null;
+          const h1 = document.querySelector('h1.reader-header__title');
+          if (h1) {
+              title = h1.textContent.split('_')[0].trim();
+          }
+          return {
+              id: 'book_pinellia_' + id,
+              url: `https://www.pinellianovel.com/books/${id}.html`,
+              isAuto: true,
+              title: title
+          };
+      }
+  }
 
   return { id: null, url: window.location.href, isAuto: false, title: null }; }
 
@@ -832,10 +921,18 @@ async function scrapePage() {
 
     let isMerged = false;
 
-    const hostsWithMerging = ['qushucheng.com', 'jwxs.org', 'shuhaixsw.com', 'kelexs.com'];
+    const hostsWithMerging = ['qushucheng.com', 'jwxs.org', 'shuhaixsw.com', 'kelexs.com', 'sudugu.org', 'pinellianovel.com'];
     const needsMerging = hostsWithMerging.some(h => HOST.includes(h));
 
-    const chapterTitle = rawChapterTitle.replace(/\s*[\(（]\d+\/\d+[\)）]\s*$/, '').trim();
+    // Создаем новую переменную, чтобы не пытаться изменить константу
+    let cleanTitle = rawChapterTitle;
+
+    // На sudugu заголовок выглядит как "Название книги > 1. Глава". Отрезаем название:
+    if (HOST.includes('sudugu.org') && cleanTitle.includes('>')) {
+        cleanTitle = cleanTitle.split('>').pop().trim();
+    }
+
+    const chapterTitle = cleanTitle.replace(/\s*[\(（](\d+\/\d+|\d+|第\d+页)[\)）]\s*$/, '').trim();
 
     if (needsMerging && bookData.chapters.length > 0) {
         const lastChapter = bookData.chapters[bookData.chapters.length - 1];
@@ -869,7 +966,18 @@ async function scrapePage() {
 
     updateStats(bookData);
 
-    const nextLink = document.querySelector(SELECTORS.nextChapterLink);
+    let nextLink = document.querySelector(SELECTORS.nextChapterLink);
+
+    if (HOST.includes('sudugu.org')) {
+        const links = document.querySelectorAll('.prenext a');
+        for (let link of links) {
+            if (link.textContent.includes('下一页') || link.textContent.includes('下一章')) {
+                nextLink = link;
+                break;
+            }
+        }
+    }
+
     if (nextLink && nextLink.href) {
         const delay = parseInt(document.getElementById('bdp-delay').value) || 2000;
         document.getElementById('bdp-status-text').textContent = `Переход (${delay}ms)...`;
@@ -1017,6 +1125,7 @@ async function renderLibrary() {
                 <a href="${b.url}" target="_blank" class="bdp-book-title">${b.title}</a>
                 <span class="bdp-book-tag">${domain}</span>
                 <button class="btn-icon btn-bookmark ${bookmarkClass}" data-id="${b.id}" title="Добавить в закладки">${bookmarkIcon}</button>
+                <button class="btn-icon edit-title-btn" data-id="${b.id}" title="Изменить название">📝</button>
                 <button class="btn-icon edit-url-btn" data-id="${b.id}" title="Править ссылку">✏️</button>
             </div>
             <div style="font-size:11px;color:#777; margin-bottom:5px;">Главы: ${b.chapterCount} | ID: ${b.id.replace('book_','')}</div>
@@ -1031,6 +1140,7 @@ async function renderLibrary() {
     list.querySelectorAll('.arc-btn').forEach(b => b.onclick = toggleArchive);
     list.querySelectorAll('.del-btn').forEach(b => b.onclick = deleteBook);
     list.querySelectorAll('.edit-url-btn').forEach(b => b.onclick = editUrl);
+    list.querySelectorAll('.edit-title-btn').forEach(b => b.onclick = editTitle);
     list.querySelectorAll('.btn-bookmark').forEach(b => b.onclick = toggleBookmark);
 }
 
@@ -1244,6 +1354,44 @@ async function toggleArchive(e) { const id = e.target.dataset.id; const b = awai
 async function toggleBookmark(e) { const id = e.target.dataset.id; const cache = await getLibraryCache(); if (cache[id]) { cache[id].isBookmarked = !cache[id].isBookmarked; await setLibraryCache(cache); renderLibrary(); } }
 async function deleteBook(e) { const id = e.target.dataset.id; if(confirm(`Удалить книгу? [${id}]`)) { await db.del(id); await db.del('bdp_session_'+id); await removeFromLibraryCache(id); renderLibrary(); } }
 async function editUrl(e) { const id = e.target.dataset.id; const b = await db.get(id); const cache = await getLibraryCache(); const currentUrl = b?.url || cache[id]?.url; const newUrl = prompt('Ссылка на оглавление:', currentUrl); if(newUrl) { if (b) { b.url = newUrl; await db.set(id, b); await updateLibraryCache(b); } else { if(cache[id]) { cache[id].url = newUrl; await setLibraryCache(cache); } } renderLibrary(); } }
+
+  async function editTitle(e) {
+    const id = e.target.dataset.id;
+    const b = await db.get(id);
+    const cache = await getLibraryCache();
+
+    // Получаем текущее название (из базы или кэша)
+    const currentTitle = b?.title || cache[id]?.title || "Без названия";
+
+    const newTitle = prompt('Введите новое название книги:', currentTitle);
+
+    if (newTitle && newTitle.trim() !== '') {
+        const cleanTitle = newTitle.trim();
+
+        // 1. Обновляем локальную базу, если она на этом сайте
+        if (b) {
+            b.title = cleanTitle;
+            await db.set(id, b);
+            await updateLibraryCache(b);
+        } else {
+            // 2. Иначе обновляем только общий кэш (для книг с других сайтов)
+            if (cache[id]) {
+                cache[id].title = cleanTitle;
+                await setLibraryCache(cache);
+            }
+        }
+
+        // 3. Обновляем заголовок в активной панели, если это текущая книга
+        if (currentBookInfo && currentBookInfo.id === id) {
+            currentBookInfo.title = cleanTitle;
+            const infoTitleEl = document.getElementById('bdp-info-title');
+            if(infoTitleEl) infoTitleEl.textContent = cleanTitle;
+        }
+
+        renderLibrary();
+    }
+}
+
 
 if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init); else init();
 
