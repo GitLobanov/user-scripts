@@ -1,9 +1,9 @@
 // ==UserScript==
-// @name         Translate Manager
+// @name         Translate Manager Fixed
 // @namespace    http://tampermonkey.net/
-// @version      6.4
+// @version      6.5
 // @description  Умный отчет, интерактивное разделение глав, live-обновление, проверка на дубли, настройка прозрачности, чек-листы и гибкая группировка ошибок.
-// @author       LobanovKeanu & AI fix
+// @author       Lobanov
 // @match        *://tl.rulate.ru/*
 // @require      https://unpkg.com/az@0.2.3/dist/az.min.js
 // @grant        GM_addStyle
@@ -240,6 +240,204 @@ GM_addStyle(`
     .summary-item { padding: 4px 8px; border-radius: 4px; margin-bottom: 4px; display: flex; justify-content: space-between; }
     .summary-item-title { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
     .summary-item-chars { color: var(--text-secondary); margin-left: 10px; flex-shrink: 0; }
+    .rst-btn-validate { background-color: var(--accent-color); } .rst-btn-validate:hover { background-color: var(--accent-hover); }
+    .rst-fix-session-overlay {
+        position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+        background-color: var(--bg-main); z-index: 100;
+        display: none; flex-direction: column;
+    }
+    .rst-fix-session-overlay.active { display: flex; }
+
+    .fix-header {
+        padding: 10px 20px; background-color: var(--bg-header); border-bottom: 1px solid var(--border-color);
+        display: flex; justify-content: space-between; align-items: center;
+    }
+    .fix-header h4 { margin: 0; color: white; display: flex; align-items: center; gap: 10px; }
+    .fix-workspace { display: flex; flex-grow: 1; overflow: hidden; }
+
+    /* Левая колонка - Список задач и Настройки */
+    .fix-sidebar-left { width: 25%; min-width: 280px; border-right: 1px solid var(--border-color); display: flex; flex-direction: column; background-color: var(--bg-secondary); }
+
+    .fix-sidebar-tabs { display: flex; border-bottom: 1px solid var(--border-color); }
+    .fix-sidebar-tab { flex: 1; padding: 10px; text-align: center; cursor: pointer; color: var(--text-secondary); background: rgba(0,0,0,0.2); font-size: 12px; }
+    .fix-sidebar-tab.active { background: var(--bg-secondary); color: var(--accent-color); font-weight: bold; border-bottom: 2px solid var(--accent-color); }
+
+    .fix-panel { display: none; flex-direction: column; height: 100%; }
+    .fix-panel.active { display: flex; }
+
+    /* Панель списка */
+    .fix-filters { padding: 10px; border-bottom: 1px solid var(--border-color); display: flex; gap: 5px; flex-wrap: wrap; }
+    .fix-filter-tag {
+        font-size: 11px; padding: 2px 6px; border-radius: 4px; border: 1px solid var(--border-color);
+        cursor: pointer; color: var(--text-secondary); user-select: none;
+    }
+    .fix-filter-tag.active { background-color: var(--accent-color); color: white; border-color: var(--accent-color); }
+    .fix-list { flex-grow: 1; overflow-y: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; }
+    .fix-item {
+        padding: 10px; background-color: var(--bg-input); border-radius: 6px; cursor: pointer;
+        border-left: 3px solid var(--warning-color); transition: background 0.2s;
+    }
+    .fix-item:hover { background-color: #353b45; }
+    .fix-item.active { background-color: #3a404a; border-left-color: var(--accent-color); box-shadow: 0 0 0 1px var(--accent-color); }
+    .fix-item.resolved { opacity: 0.5; border-left-color: var(--success-color); text-decoration: line-through; }
+    .fix-item-line { font-size: 11px; color: var(--text-secondary); margin-bottom: 4px; display: flex; justify-content: space-between; }
+    .fix-item-preview { font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    /* Панель настроек списков */
+    .fix-settings-content { padding: 15px; overflow-y: auto; display: flex; flex-direction: column; gap: 15px; }
+    .fix-settings-group label { display: block; margin-bottom: 5px; color: var(--text-secondary); font-size: 12px; }
+    .fix-settings-group textarea { height: 150px; font-size: 12px; }
+
+    /* Центральная область - Редактор 3-х строк */
+    .fix-editor-area { flex-grow: 1; padding: 20px; display: flex; flex-direction: column; gap: 15px; overflow-y: auto; }
+    .fix-error-desc { color: var(--warning-color); font-size: 13px; padding: 10px; background: rgba(229, 192, 123, 0.1); border-radius: 4px; border: 1px solid rgba(229, 192, 123, 0.3); }
+
+    .fix-unified-container { display: flex; flex-direction: column; flex-grow: 1; gap: 5px; }
+    .fix-unified-header { font-size: 12px; color: var(--text-secondary); display: flex; justify-content: space-between; }
+    .fix-unified-textarea {
+        flex-grow: 1;
+        width: 100%;
+        box-sizing: border-box;
+        resize: none;
+        padding: 15px;
+        font-size: 14px;
+        line-height: 1.6;
+        background-color: var(--bg-input);
+        border: 1px solid var(--border-color);
+        color: var(--text-primary);
+        font-family: var(--font-mono);
+        border-radius: 6px;
+        min-height: 200px;
+    }
+    .fix-unified-textarea:focus {
+        border-color: var(--accent-color);
+        outline: none;
+        box-shadow: 0 0 0 2px rgba(97, 175, 239, 0.2);
+    }
+
+    .fix-controls { display: flex; gap: 10px; margin-top: 10px; padding-top: 10px; border-top: 1px solid var(--border-color); }
+
+    /* Правая колонка */
+    .fix-sidebar-right { width: 20%; min-width: 200px; border-left: 1px solid var(--border-color); background-color: var(--bg-secondary); display: flex; flex-direction: column; }
+    .fix-stats { padding: 15px; border-bottom: 1px solid var(--border-color); text-align: center; }
+    .fix-stat-circle {
+        width: 80px; height: 80px; border-radius: 50%; border: 4px solid var(--border-color);
+        margin: 0 auto 10px; display: flex; align-items: center; justify-content: center;
+        font-size: 20px; font-weight: bold; color: var(--accent-color);
+    }
+    .fix-history { flex-grow: 1; overflow-y: auto; padding: 10px; }
+    .fix-history-item { font-size: 12px; padding: 8px; border-bottom: 1px solid var(--border-color); color: var(--success-color); }
+    .fix-history-item span { color: var(--text-secondary); display: block; font-size: 10px; margin-top: 2px;}
+    .rst-btn-fix-start { background-color: var(--warning-color); color: #282c34; font-weight: bold; margin-left: 10px; display: none; }
+    .merge-controls {
+        display: flex; gap: 10px; padding: 10px; background: var(--bg-input);
+        border-bottom: 1px solid var(--border-color); align-items: center;
+    }
+    .merge-controls input { width: 80px !important; }
+    .merge-list-container {
+        flex-grow: 1; overflow-y: auto; padding: 10px; position: relative;
+    }
+    .merge-item {
+        display: flex; align-items: center; padding: 8px 12px;
+        border-bottom: 1px solid var(--border-color); cursor: pointer;
+        transition: background 0.2s; user-select: none;
+    }
+    .merge-item:hover { background-color: rgba(255,255,255,0.05); }
+    .merge-item.selected {
+        background-color: rgba(97, 175, 239, 0.2);
+        border-left: 3px solid var(--accent-color);
+    }
+    .merge-item-checkbox {
+        margin-right: 15px; transform: scale(1.2); pointer-events: none;
+    }
+    .merge-item-info { flex-grow: 1; }
+    .merge-item-title { font-weight: bold; font-size: 13px; display: block;}
+    .merge-item-meta { font-size: 11px; color: var(--text-secondary); margin-top: 2px; }
+    .merge-item-size-warn { color: var(--warning-color); }
+
+    #merge-action-btn {
+        position: absolute; bottom: 20px; right: 20px;
+        background-color: var(--accent-color); color: white;
+        padding: 12px 24px; border-radius: 30px; border: none;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3); font-weight: bold;
+        cursor: pointer; z-index: 10; display: none;
+        transition: transform 0.2s;
+    }
+    #merge-action-btn:hover { transform: translateY(-2px); background-color: var(--accent-hover); }
+    #merge-action-btn span { background: rgba(0,0,0,0.2); padding: 2px 6px; border-radius: 10px; margin-left: 8px; font-size: 0.9em; }
+    .rst-duplicate-alert {
+        background-color: rgba(224, 108, 117, 0.15);
+        border: 1px solid var(--error-color);
+        border-radius: 6px;
+        padding: 15px;
+        margin-bottom: 20px;
+    }
+    .rst-duplicate-header {
+        color: var(--error-color);
+        font-weight: bold;
+        font-size: 1.1em;
+        margin-bottom: 10px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+    }
+    .rst-dup-item {
+        background-color: var(--bg-main);
+        padding: 10px;
+        border-radius: 4px;
+        margin-bottom: 8px;
+        font-size: 13px;
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        border-left: 3px solid var(--warning-color);
+    }
+    .rst-dup-info { display: flex; flex-direction: column; gap: 4px; }
+    .rst-dup-snippet { color: var(--text-secondary); font-style: italic; font-size: 12px; max-width: 600px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+    /* Модальное окно сравнения */
+    #dup-compare-modal {
+        position: fixed; top: 0; left: 0; width: 100%; height: 100%;
+        background-color: rgba(0,0,0,0.85); z-index: 11000;
+        display: none; justify-content: center; align-items: center;
+    }
+    #dup-compare-modal.active { display: flex; }
+    .dup-modal-content {
+        width: 90%; height: 90%; background-color: var(--bg-secondary);
+        border-radius: 8px; display: flex; flex-direction: column;
+        border: 1px solid var(--border-color);
+        box-shadow: 0 0 50px rgba(0,0,0,0.5);
+    }
+    .dup-modal-header {
+        padding: 15px; background-color: var(--bg-header);
+        border-bottom: 1px solid var(--border-color);
+        display: flex; justify-content: space-between; align-items: center;
+    }
+    .dup-modal-body {
+        flex-grow: 1; display: flex; gap: 10px; padding: 15px; overflow: hidden;
+    }
+    .dup-pane {
+        flex: 1; display: flex; flex-direction: column; gap: 10px;
+        background-color: var(--bg-main); padding: 10px; border-radius: 6px;
+    }
+    .dup-pane-title { font-weight: bold; color: var(--accent-color); border-bottom: 1px solid var(--border-color); padding-bottom: 5px; }
+    .dup-pane-text {
+        flex-grow: 1; overflow-y: auto; white-space: pre-wrap;
+        font-family: var(--font-mono); font-size: 13px; line-height: 1.5;
+        color: var(--text-secondary);
+    }
+    .dup-highlight {
+        background-color: rgba(229, 192, 123, 0.2);
+        color: var(--text-primary);
+        border-bottom: 2px solid var(--warning-color);
+        cursor: pointer;
+    }
+    .dup-highlight:hover { background-color: rgba(229, 192, 123, 0.4); }
+    .dup-target-highlight {
+        background-color: rgba(224, 108, 117, 0.3);
+        color: white;
+        border: 1px solid var(--error-color);
+    }
 `);
 
 
@@ -293,6 +491,7 @@ menu.innerHTML = `
              <div class="rst-tabs">
                 <button class="rst-tab rst-active" data-view="formatter-view">Форматтер глав</button>
                 <button class="rst-tab" data-view="validator-view">Проверка текста</button>
+                <button class="rst-tab" data-view="summary-view">Матем. пересказ</button>
              </div>
         </div>
         <div class="rst-header-controls">
@@ -318,14 +517,17 @@ menu.innerHTML = `
                 </div>
                 <div class="rst-control-group rst-checkbox-group"><label title="Работает только в режиме 'Заменить в тексте'"><input type="checkbox" id="fmt-replace-brackets">Заменить [] на 【】 в тексте (игнорируя главы)</label></div>
                 <div class="rst-control-group rst-checkbox-group"><label title="Добавляет пустую строку после каждого абзаца, если ее нет. Работает только в режиме 'Заменить в тексте'"><input type="checkbox" id="fmt-add-spacing">Добавить отступы между абзацами</label></div>
-                <div class="rst-control-group rst-checkbox-group"><label title="Выравнивает нумерацию всех глав, начиная с номера первой главы. Игнорирует пропуски в оригинальной нумерации."><input type="checkbox" id="fmt-align-numbers">Выравнить номера глав</label></div>
+                <div class="rst-control-group rst-checkbox-group"><label title="Выравнивает нумерацию всех глав..."><input type="checkbox" id="fmt-align-numbers">Выравнить номера глав</label></div>
+               <div class="rst-control-group rst-checkbox-group"><label title="Убирает пробелы и спец-отступы в начале и конце каждой строки"><input type="checkbox" id="fmt-trim-lines" checked>Убрать отступы строк</label></div>
+
             </div>
             <div class="rst-row">
                 <div class="rst-col" style="flex: 3;">
                     <div class="rst-label-group">
                          <div class="rst-sub-tabs">
                             <button class="rst-sub-tab rst-active" data-sub-view="fmt-source-sub-view">Исходный текст</button>
-                            <button class="rst-sub-tab" data-sub-view="fmt-interactive-sub-view">Интерактивная работа</button>
+                            <button class="rst-sub-tab" data-sub-view="fmt-interactive-sub-view">Интерактивная нарезка</button>
+                            <button class="rst-sub-tab" data-sub-view="fmt-merge-sub-view">Объединение глав</button>
                         </div>
                         <div class="rst-label-actions">
                             <button class="rst-btn-upload" data-target="fmt-source-text" data-input="fmt-file-input">Загрузить</button>
@@ -342,6 +544,21 @@ menu.innerHTML = `
                                 <div id="fmt-interactive-view"></div>
                             </div>
                         </div>
+                        <div id="fmt-merge-sub-view" class="rst-sub-view" style="flex-direction: column;">
+                            <div class="merge-controls">
+                                <label>Фильтр (макс. симв):</label>
+                                <input type="number" id="merge-filter-size" value="4000" step="500">
+                                <label>Соседи (+/-):</label>
+                                <input type="number" id="merge-filter-neighbors" value="1" min="0" max="5">
+                                <button id="merge-apply-filter" class="rst-btn-upload">Применить</button>
+                                <button id="merge-reset-filter" class="rst-btn-clear" style="margin-left:auto">Показать все</button>
+                            </div>
+                            <div class="merge-list-container">
+                                <button id="merge-action-btn">Объединить выделенное <span id="merge-count-badge">0</span></button>
+                                <div id="merge-list-view"></div>
+                            </div>
+                        </div>
+
                     </div>
                 </div>
                 <div class="rst-col" style="flex: 1;">
@@ -387,6 +604,7 @@ menu.innerHTML = `
                          <label for="validator-source-text" class="rst-label">Текст для проверки:</label>
                          <div class="rst-label-actions">
                              <button class="rst-btn-upload" data-target="validator-source-text" data-input="validator-file-input">Загрузить файл</button>
+                             <button id="validator-copy-text-btn" class="rst-btn-upload" style="border-color: var(--success-color); color: var(--success-color);">Копировать текст</button>
                              <button id="validator-clear-btn" class="rst-btn-clear">Очистить</button>
                          </div>
                          <input type="file" id="validator-file-input" accept=".txt,.md,text/plain,text/markdown" style="display: none;">
@@ -408,7 +626,147 @@ menu.innerHTML = `
             </div>
              <div class="rst-actions">
                 <button id="validator-process-btn" class="rst-btn-validate">Проверить текст</button>
+                <button id="validator-fix-btn" class="rst-btn-fix-start">⚡ Исправить (Интерактив)</button>
+                <button id="validator-copy-llm-btn" class="rst-btn-llm" style="display: none;">Копировать ошибки</button>
              </div>
+
+              <div id="validator-fix-overlay" class="rst-fix-session-overlay">
+                 <div class="fix-header">
+                     <h4>⚡ Интерактивное исправление</h4>
+                     <div>
+                         <button id="fix-finish-btn" class="rst-btn-process">Завершить и сохранить</button>
+                         <button id="fix-cancel-btn" class="rst-btn-clear">Отмена</button>
+                     </div>
+                 </div>
+                 <div class="fix-workspace">
+                     <!-- ЛЕВАЯ КОЛОНКА -->
+                     <div class="fix-sidebar-left">
+                         <div class="fix-sidebar-tabs">
+                             <div class="fix-sidebar-tab active" data-tab="fix-panel-list">Ошибки</div>
+                             <div class="fix-sidebar-tab" data-tab="fix-panel-settings">Словари</div>
+                         </div>
+
+                         <!-- Панель 1: Список ошибок -->
+                         <div id="fix-panel-list" class="fix-panel active">
+                             <div class="fix-filters" id="fix-category-filters"></div>
+                             <div class="fix-list" id="fix-queue-list"></div>
+                         </div>
+
+                         <!-- Панель 2: Настройки словарей -->
+                         <div id="fix-panel-settings" class="fix-panel">
+                             <div class="fix-settings-content">
+                                 <div class="fix-settings-group">
+                                     <label>Ignore List (Слова-исключения):</label>
+                                     <textarea id="fix-ignore-edit"></textarea>
+                                 </div>
+                                 <div class="fix-settings-group">
+                                     <label>Stop List (Стоп-слова):</label>
+                                     <textarea id="fix-stop-edit"></textarea>
+                                 </div>
+                                 <button id="fix-save-lists-btn" class="rst-btn-validate" style="width:100%">Сохранить словари</button>
+                                 <div style="font-size:11px; color:var(--text-secondary); margin-top:5px;">
+                                     * Изменения применятся к следующим проверкам.
+                                 </div>
+                             </div>
+                         </div>
+                     </div>
+
+                     <!-- ЦЕНТРАЛЬНАЯ КОЛОНКА -->
+                     <div class="fix-editor-area">
+                         <div id="fix-empty-state" style="text-align: center; color: var(--text-secondary); margin-top: 50px;">
+                             Выберите строку с ошибкой слева.
+                         </div>
+                         <div id="fix-editor-container" style="display: none; height: 100%; flex-direction: column;">
+                              <div class="fix-error-desc" id="fix-current-errors-desc" style="flex-shrink: 0; margin-bottom: 15px;"></div>
+
+                             <div class="fix-unified-container">
+                                 <div class="fix-unified-header">
+                                     <span id="fix-unified-info">Редактирование контекста (±2 строки)</span>
+                                 </div>
+                                 <textarea id="fix-unified-input" class="fix-unified-textarea" tabindex="1"></textarea>
+                             </div>
+
+                             <div class="fix-controls">
+                                 <button id="fix-apply-btn" class="rst-btn-validate">Применить (Ctrl+Enter)</button>
+                                 <button id="fix-skip-btn" class="rst-btn-clear" style="border-color: var(--text-secondary); color: var(--text-secondary);">Пропустить</button>
+                             </div>
+                         </div>
+                     </div>
+
+                     <!-- ПРАВАЯ КОЛОНКА -->
+                     <div class="fix-sidebar-right">
+                         <div class="fix-stats">
+                             <div class="fix-stat-circle" id="fix-progress-circle">0%</div>
+                             <div style="font-size: 12px; color: var(--text-secondary);">Исправлено: <span id="fix-count-done">0</span> / <span id="fix-count-total">0</span></div>
+                         </div>
+                         <div class="fix-label" style="padding: 0 10px;">История сессии:</div>
+                         <div class="fix-history" id="fix-history-list"></div>
+                     </div>
+                 </div>
+             </div>
+        </div>
+        <div id="summary-view" class="rst-view">
+    <div class="rst-controls">
+        <div class="rst-control-group">
+            <div class="rst-label-group">
+                <label for="sum-ratio-slider">Степень сжатия (оставить % текста): <span id="sum-ratio-val" style="color:var(--accent-color)">30%</span></label>
+            </div>
+            <input type="range" id="sum-ratio-slider" min="5" max="90" value="30" step="5">
+        </div>
+        <div class="rst-control-group">
+             <label>Алгоритм:</label>
+             <div style="font-size: 12px; color: var(--text-secondary); margin-top: 5px;">
+                 Частотный анализ (Frequency Weighing)
+             </div>
+        </div>
+    </div>
+
+    <div class="rst-row">
+        <div class="rst-col">
+            <div class="rst-label-group">
+                <label class="rst-label">Исходный текст</label>
+                <div class="rst-label-actions">
+                     <button id="sum-paste-btn" class="rst-btn-upload">Вставить из буфера</button>
+                </div>
+            </div>
+            <textarea id="sum-source-text" placeholder="Вставьте длинный текст сюда..."></textarea>
+        </div>
+        <div class="rst-col">
+            <div class="rst-label-group">
+                <label class="rst-label">Краткое содержание (Выжимка)</label>
+                <div class="rst-label-actions">
+                    <button id="sum-copy-btn" class="rst-btn-copy">Копировать</button>
+                </div>
+            </div>
+            <textarea id="sum-result-text" readonly placeholder="Здесь появится результат..." style="background-color: var(--bg-secondary);"></textarea>
+            <div id="sum-stats" style="font-size: 12px; color: var(--text-secondary); text-align: right; margin-top: 5px;"></div>
+        </div>
+        </div>
+        <div class="rst-actions">
+            <button id="sum-process-btn" class="rst-btn-process" style="width: 100%;">⚡ Выполнить математическое сжатие</button>
+        </div>
+    </div>
+        <div id="dup-compare-modal">
+            <div class="dup-modal-content">
+                <div class="dup-modal-header">
+                    <h3>⚔️ Сравнение дубликатов</h3>
+                    <button class="rst-close-btn" id="dup-close-btn">&times;</button>
+                </div>
+                <div class="dup-modal-body">
+                    <div class="dup-pane">
+                        <div class="dup-pane-title">Оригинал (Первое появление)</div>
+                        <div class="dup-pane-text" id="dup-text-orig"></div>
+                    </div>
+                    <div class="dup-pane">
+                        <div class="dup-pane-title">Дубликат (Повтор)</div>
+                        <div class="dup-pane-text" id="dup-text-copy"></div>
+                    </div>
+                </div>
+                <div class="rst-actions" style="padding: 15px; justify-content: flex-end; background-color: var(--bg-header);">
+                     <span style="margin-right: auto; color: var(--text-secondary); font-size: 12px;">* Удаление пока недоступно в этом окне, используйте редактор.</span>
+                     <button class="rst-btn-clear" id="dup-cancel-btn">Закрыть</button>
+                </div>
+            </div>
         </div>
     </div>
 `;
@@ -436,20 +794,31 @@ const loadOpacity = () => { const savedOpacity = localStorage.getItem('rst_opaci
 opacitySlider.addEventListener('input', (e) => { applyOpacity(e.target.value); localStorage.setItem('rst_opacity', e.target.value); });
 loadOpacity();
 document.querySelectorAll('.rst-btn-upload').forEach(button => {
-    const fileInputId = button.dataset.input, targetTextareaId = button.dataset.target;
-    const fileInput = document.getElementById(fileInputId), targetTextarea = document.getElementById(targetTextareaId);
-    button.addEventListener('click', () => fileInput.click());
-    fileInput.addEventListener('change', (event) => {
-        const file = event.target.files[0]; if (!file) return;
-        const reader = new FileReader();
-        reader.onload = (e) => {
-            targetTextarea.value = e.target.result;
-            targetTextarea.dispatchEvent(new Event('input', { bubbles: true }));
-        };
-        reader.onerror = () => { alert('Не удалось прочитать файл.'); };
-        reader.readAsText(file);
-        event.target.value = '';
-    });
+    // Получаем ID, но проверяем, существуют ли они
+    const fileInputId = button.dataset.input;
+    const targetTextareaId = button.dataset.target;
+
+    // Если у кнопки нет атрибута data-input (например, это кнопка "Копировать"), пропускаем её
+    if (!fileInputId || !targetTextareaId) return;
+
+    const fileInput = document.getElementById(fileInputId);
+    const targetTextarea = document.getElementById(targetTextareaId);
+
+    // Дополнительная защита: проверяем, найдены ли элементы в DOM
+    if (fileInput && targetTextarea) {
+        button.addEventListener('click', () => fileInput.click());
+        fileInput.addEventListener('change', (event) => {
+            const file = event.target.files[0]; if (!file) return;
+            const reader = new FileReader();
+            reader.onload = (e) => {
+                targetTextarea.value = e.target.result;
+                targetTextarea.dispatchEvent(new Event('input', { bubbles: true }));
+            };
+            reader.onerror = () => { alert('Не удалось прочитать файл.'); };
+            reader.readAsText(file);
+            event.target.value = '';
+        });
+    }
 });
 
 
@@ -682,12 +1051,19 @@ document.querySelectorAll('.rst-btn-upload').forEach(button => {
 
         if (selectedMode === 'titles') {
             resultOutput = chaptersToProcess.map(c => `# [Глава ${c.finalNumber}. ${c.finalTitle}]`).join('\n');
-        } else { // 'replace' mode
+        } else {
             resultOutput = chaptersToProcess.map(c => {
-                const newHeader = `# [Глава ${c.finalNumber}. ${c.finalTitle}]`;
-                const body = c.content.replace(chapterRegex, '').trim();
-                return newHeader + (body ? '\n' + body : '');
-            }).join('\n\n');
+              const newHeader = `# [Глава ${c.finalNumber}. ${c.finalTitle}]`;
+              let body = c.content.replace(chapterRegex, '').trim();
+
+              const trimCheckbox = document.getElementById('fmt-trim-lines');
+              if (trimCheckbox && trimCheckbox.checked) {
+                  body = body.split('\n').map(line => line.trim()).join('\n');
+              }
+              // -----------------------------------
+
+              return newHeader + (body ? '\n' + body : '');
+          }).join('\n\n');
 
             if (replaceBracketsCheckbox.checked) {
                 resultOutput = resultOutput.split('\n').map(line => line.startsWith('# [') ? line : line.replace(/\[/g, '【').replace(/\]/g, '】')).join('\n');
@@ -716,11 +1092,217 @@ document.querySelectorAll('.rst-btn-upload').forEach(button => {
         resultTextarea.value = resultOutput;
     };
 
+    const mergeListView = document.getElementById('merge-list-view');
+    const mergeActionBtn = document.getElementById('merge-action-btn');
+    const mergeCountBadge = document.getElementById('merge-count-badge');
+    const mergeFilterSize = document.getElementById('merge-filter-size');
+    const mergeFilterNeighbors = document.getElementById('merge-filter-neighbors');
+    const mergeApplyFilterBtn = document.getElementById('merge-apply-filter');
+    const mergeResetFilterBtn = document.getElementById('merge-reset-filter');
+
+    let mergeSelectedIndices = new Set(); // Хранит индексы из originalChapters
+
+    // Рендер списка объединения
+    const renderMergeView = (filterSize = null, neighborsCount = 0) => {
+        mergeListView.innerHTML = '';
+        if (originalChapters.length === 0) {
+            mergeListView.innerHTML = '<div style="padding:20px; text-align:center; color:var(--text-secondary)">Нет глав для обработки. Загрузите текст.</div>';
+            return;
+        }
+
+        // Логика фильтрации
+        let visibleIndices = new Set();
+        if (filterSize !== null) {
+            originalChapters.forEach((chap, idx) => {
+                if (chap.content.length <= filterSize) {
+                    visibleIndices.add(idx);
+                    // Добавляем соседей
+                    for (let n = 1; n <= neighborsCount; n++) {
+                        if (idx - n >= 0) visibleIndices.add(idx - n);
+                        if (idx + n < originalChapters.length) visibleIndices.add(idx + n);
+                    }
+                }
+            });
+        } else {
+            // Если фильтра нет, показываем все
+            originalChapters.forEach((_, idx) => visibleIndices.add(idx));
+        }
+
+        // Сортируем индексы для вывода
+        const sortedIndices = Array.from(visibleIndices).sort((a, b) => a - b);
+        let lastIdx = -1;
+
+        sortedIndices.forEach(index => {
+            const chap = originalChapters[index];
+            if (!chap) return;
+
+            // Разделитель, если есть разрыв в нумерации (скрытые главы)
+            if (lastIdx !== -1 && index > lastIdx + 1) {
+                const sep = document.createElement('div');
+                sep.style.padding = '5px';
+                sep.style.textAlign = 'center';
+                sep.style.fontSize = '12px';
+                sep.style.color = 'var(--text-secondary)';
+                sep.textContent = `... скрыто ${index - lastIdx - 1} глав ...`;
+                mergeListView.appendChild(sep);
+            }
+            lastIdx = index;
+
+            const el = document.createElement('div');
+            el.className = 'merge-item';
+            if (mergeSelectedIndices.has(index)) el.classList.add('selected');
+            el.dataset.index = index;
+
+            const sizeClass = chap.content.length < 3000 ? 'merge-item-size-warn' : '';
+
+            el.innerHTML = `
+                <input type="checkbox" class="merge-item-checkbox" ${mergeSelectedIndices.has(index) ? 'checked' : ''}>
+                <div class="merge-item-info">
+                    <span class="merge-item-title">${'Глава ' + chap.originalNumber + '. ' + chap.originalTitle}</span>
+                    <div class="merge-item-meta">
+                        Символов: <span class="${sizeClass}">${chap.content.length.toLocaleString()}</span>
+                    </div>
+                </div>
+            `;
+
+            // Обработчик клика (toggle selection)
+            el.addEventListener('click', (e) => {
+                // Если клик с Shift - выделение диапазона
+                if (e.shiftKey && lastClickedIndex !== null) {
+                    const start = Math.min(lastClickedIndex, index);
+                    const end = Math.max(lastClickedIndex, index);
+                    for (let i = start; i <= end; i++) {
+                         // Проверяем, есть ли этот индекс в текущем видимом списке (чтобы не выделить скрытое)
+                         if (visibleIndices.has(i)) {
+                             mergeSelectedIndices.add(i);
+                             const row = mergeListView.querySelector(`.merge-item[data-index="${i}"]`);
+                             if(row) {
+                                 row.classList.add('selected');
+                                 row.querySelector('input').checked = true;
+                             }
+                         }
+                    }
+                } else {
+                    // Обычный клик
+                    if (mergeSelectedIndices.has(index)) {
+                        mergeSelectedIndices.delete(index);
+                        el.classList.remove('selected');
+                        el.querySelector('input').checked = false;
+                    } else {
+                        mergeSelectedIndices.add(index);
+                        el.classList.add('selected');
+                        el.querySelector('input').checked = true;
+                    }
+                    lastClickedIndex = index;
+                }
+                updateMergeButton();
+            });
+
+            mergeListView.appendChild(el);
+        });
+    };
+
+    let lastClickedIndex = null;
+
+    const updateMergeButton = () => {
+        const count = mergeSelectedIndices.size;
+        mergeCountBadge.textContent = count;
+        if (count >= 2) {
+            mergeActionBtn.style.display = 'block';
+            // Проверка на последовательность (опционально, но желательно объединять только соседей)
+            const sorted = Array.from(mergeSelectedIndices).sort((a,b)=>a-b);
+            let isSequence = true;
+            for(let i=0; i<sorted.length-1; i++) {
+                if(sorted[i+1] !== sorted[i]+1) isSequence = false;
+            }
+            if(!isSequence) {
+                mergeActionBtn.style.backgroundColor = 'var(--warning-color)';
+                mergeActionBtn.title = "Внимание: Выделенные главы не идут подряд!";
+            } else {
+                mergeActionBtn.style.backgroundColor = 'var(--accent-color)';
+                mergeActionBtn.title = "";
+            }
+        } else {
+            mergeActionBtn.style.display = 'none';
+        }
+    };
+
+    const executeMerge = () => {
+        if (mergeSelectedIndices.size < 2) return;
+
+        const indices = Array.from(mergeSelectedIndices).sort((a, b) => a - b);
+
+        // 1. Находим целевую главу (последнюю, как вы просили: 101 + 102 -> останется 102)
+        const targetIndex = indices[indices.length - 1];
+        const targetChapter = originalChapters[targetIndex];
+
+        // 2. Нам нужно сохранить оригинальную строку заголовка целевой главы (например "Глава 102. Дух (2)")
+        // Мы ищем её регуляркой в контенте или восстанавливаем вручную
+        let targetHeaderLine = targetChapter.content.match(chapterRegex);
+        targetHeaderLine = targetHeaderLine ? targetHeaderLine[0] : `Глава ${targetChapter.originalNumber}. ${targetChapter.originalTitle}`;
+
+        // 3. Собираем ЧИСТЫЙ текст (без заголовков "Глава ...")
+        let combinedBody = '';
+
+        indices.forEach(idx => {
+            let text = originalChapters[idx].content;
+
+            // ВОТ ТУТ ИСПРАВЛЕНИЕ:
+            // Удаляем первую строку, если она похожа на заголовок главы.
+            // replace заменит только первое вхождение (то есть заголовок в начале)
+            text = text.replace(chapterRegex, '').trim();
+
+            if (text) {
+                combinedBody += text + '\n\n'; // Добавляем отступы между кусками
+            }
+        });
+
+        // 4. Записываем результат в целевую главу:
+        // Сначала идет заголовок целевой главы, потом перенос, потом весь склеенный текст
+        targetChapter.content = targetHeaderLine + '\n' + combinedBody.trim();
+
+        // 5. Удаляем влитые главы (все кроме последней)
+        // Идем с конца списка (кроме самого последнего элемента), чтобы индексы не сместились при удалении
+        for (let i = indices.length - 2; i >= 0; i--) {
+            originalChapters.splice(indices[i], 1);
+        }
+
+        // 6. Сброс выделения и интерфейса
+        mergeSelectedIndices.clear();
+        updateMergeButton();
+
+        // Обновляем все отображения
+        renderInteractiveView();
+        recalculateAndRenderAll();
+
+        // Обновляем список объединения (чтобы удаленные главы пропали)
+        mergeApplyFilterBtn.click();
+    };
+
+    // Слушатели для Merge View
+    mergeApplyFilterBtn.addEventListener('click', () => {
+        const size = parseInt(mergeFilterSize.value, 10) || 4000;
+        const neighbors = parseInt(mergeFilterNeighbors.value, 10) || 0;
+        renderMergeView(size, neighbors);
+    });
+
+    mergeResetFilterBtn.addEventListener('click', () => {
+        renderMergeView(null, 0);
+    });
+
+    mergeActionBtn.addEventListener('click', () => {
+        if(confirm(`Объединить выбранные главы (${mergeSelectedIndices.size} шт)?\nЗаголовок будет взят от последней главы в списке.`)) {
+            executeMerge();
+        }
+    });
+
+
     const initializeAll = () => {
         splitPoints.clear();
         parseSourceText();
         renderInteractiveView();
         recalculateAndRenderAll();
+        renderMergeView(null, 0);
     };
 
     sourceTextarea.addEventListener('input', () => {
@@ -731,10 +1313,13 @@ document.querySelectorAll('.rst-btn-upload').forEach(button => {
     processBtn.addEventListener('click', processFinalText);
     limitInput.addEventListener('input', processFinalText);
     document.querySelectorAll('input[name="fmt-mode"]').forEach(radio => radio.addEventListener('change', processFinalText));
+
+
     loadSettings();
     replaceBracketsCheckbox.addEventListener('change', () => { saveSettings(); processFinalText(); });
     addSpacingCheckbox.addEventListener('change', () => { saveSettings(); processFinalText(); });
     alignNumbersCheckbox.addEventListener('change', recalculateAndRenderAll);
+    document.getElementById('fmt-trim-lines').addEventListener('change', processFinalText);
     copyBtn.addEventListener('click', () => { resultTextarea.select(); document.execCommand('copy'); copyBtn.textContent = 'Скопировано!'; setTimeout(() => copyBtn.textContent = 'Копировать', 2000); });
     const downloadFile = (filename, content) => { const a = document.createElement('a'); a.setAttribute('href', `data:text/plain;charset=utf-8,${encodeURIComponent(content)}`); a.setAttribute('download', filename); a.style.display = 'none'; document.body.appendChild(a); a.click(); document.body.removeChild(a); };
     downloadTxtBtn.addEventListener('click', () => downloadFile('chapters.txt', resultTextarea.value));
@@ -752,7 +1337,7 @@ document.querySelectorAll('.rst-btn-upload').forEach(button => {
 // --- ЛОГИКА ВАЛИДАТОРА ТЕКСТА ---
 (() => {
     const ignoreWordsEl = document.getElementById('validator-ignore-words'), stopWordsEl = document.getElementById('validator-stop-words'), sourceTextEl = document.getElementById('validator-source-text'), resultsEl = document.getElementById('validation-results'), processBtn = document.getElementById('validator-process-btn'), clearBtn = document.getElementById('validator-clear-btn'),
-        groupingRadios = document.querySelectorAll('input[name="validator-grouping"]'),
+        groupingRadios = document.querySelectorAll('input[name="validator-grouping"]'), copyLLMBtn = document.getElementById('validator-copy-llm-btn'),
         checks = {
             latin: document.getElementById('check-latin'),
             asian: document.getElementById('check-asian'),
@@ -785,6 +1370,7 @@ document.querySelectorAll('.rst-btn-upload').forEach(button => {
     }
 
     let currentErrors = [];
+    let contentDuplicates = [];
     const DEFAULTS = {
         ignoreWords: ["NPC", "жестокая", "VIP", "ASMR", "Система"].join('\n'),
         stopWords: ["Причинно-след*", "NB:", "TODO", "благостно", "troublesome", "ó", "осклабился", "кривотолки", "Разделительная линия", "чресла", "амплифици*", "промурлыкал", "токая", "янская ци", "НАЧАЛО ПЕРЕВОДА"].join('\n'),
@@ -874,6 +1460,59 @@ document.querySelectorAll('.rst-btn-upload').forEach(button => {
         return errors;
     };
 
+    const findContentDuplicates = (text, minLength = 200) => {
+        const seenChunks = new Map();
+        const results = [];
+        const lengthText = text.length;
+        let i = 0;
+
+        while (i < lengthText - minLength) {
+            const chunk = text.substr(i, minLength);
+
+            if (seenChunks.has(chunk)) {
+                const firstFoundIndex = seenChunks.get(chunk);
+
+                // Проверяем реальную длину совпадения
+                let matchLen = 0;
+                while (i + matchLen < lengthText && text[firstFoundIndex + matchLen] === text[i + matchLen]) {
+                    matchLen++;
+                }
+
+                // Избегаем пересечений (например "ааааа")
+                if (i >= firstFoundIndex + matchLen) {
+                    results.push({
+                        origStart: firstFoundIndex,
+                        dupStart: i,
+                        length: matchLen,
+                        snippet: text.substr(firstFoundIndex, Math.min(100, matchLen)).replace(/\n/g, ' ') + '...'
+                    });
+
+                    // Пропускаем найденный кусок
+                    i += matchLen;
+                    continue;
+                }
+            } else {
+                seenChunks.set(chunk, i);
+            }
+            i++;
+        }
+        return results;
+    };
+
+    // Хелпер для поиска номера строки по индексу символа
+    const getLineByCharIndex = (lines, charIndex) => {
+        let count = 0;
+        for (let k = 0; k < lines.length; k++) {
+            // +1 для учета символа переноса строки (примерно)
+            let lineLen = lines[k].length + 1;
+            if (charIndex < count + lineLen) {
+                return { lineNum: k + 1, text: lines[k] };
+            }
+            count += lineLen;
+        }
+        return { lineNum: lines.length, text: lines[lines.length-1] };
+    };
+
     const runValidation = () => {
         const ignoreWords = ignoreWordsEl.value.split('\n').map(w => w.trim()).filter(Boolean);
         const stopWords = stopWordsEl.value.split('\n').map(w => w.trim()).filter(Boolean);
@@ -891,6 +1530,37 @@ document.querySelectorAll('.rst-btn-upload').forEach(button => {
         let allErrors = [];
         let errorIdCounter = 0;
         let currentChapter = { fullTitle: "Пролог / Текст вне глав", lineNum: 1 };
+
+        contentDuplicates = [];
+        if (checks.duplicates.checked) {
+            // Ищем повторы длиннее 200 символов
+            const rawDups = findContentDuplicates(sourceTextEl.value, 200);
+
+            // Превращаем индексы в номера строк и главы
+            contentDuplicates = rawDups.map(d => {
+                const origInfo = getLineByCharIndex(textLines, d.origStart);
+                const dupInfo = getLineByCharIndex(textLines, d.dupStart);
+
+                // Ищем заголовки глав для контекста
+                let origChapter = "Начало текста";
+                let dupChapter = "Начало текста";
+
+                for(let l = origInfo.lineNum - 1; l >= 0; l--) {
+                    if(textLines[l].match(/^(Глава\s+\d+)/)) { origChapter = textLines[l].trim(); break; }
+                }
+                for(let l = dupInfo.lineNum - 1; l >= 0; l--) {
+                    if(textLines[l].match(/^(Глава\s+\d+)/)) { dupChapter = textLines[l].trim(); break; }
+                }
+
+                return {
+                    ...d,
+                    origLine: origInfo.lineNum,
+                    dupLine: dupInfo.lineNum,
+                    origChapter,
+                    dupChapter
+                };
+            });
+        }
 
         textLines.forEach((line, index) => {
             const lineNum = index + 1;
@@ -970,13 +1640,43 @@ document.querySelectorAll('.rst-btn-upload').forEach(button => {
 
     const displayResults = () => {
         resultsEl.innerHTML = '';
+
+        if (typeof contentDuplicates !== 'undefined' && contentDuplicates.length > 0) {
+            const dupAlert = document.createElement('div');
+            dupAlert.className = 'rst-duplicate-alert';
+
+            const header = document.createElement('div');
+            header.className = 'rst-duplicate-header';
+            header.innerHTML = `<span>⚠️ Найдены крупные повторы текста (${contentDuplicates.length})</span>`;
+            dupAlert.appendChild(header);
+
+            contentDuplicates.forEach((dup, idx) => {
+                const item = document.createElement('div');
+                item.className = 'rst-dup-item';
+                item.innerHTML = `
+                    <div class="rst-dup-info">
+                        <strong>Повтор #${idx + 1} (Длина: ${dup.length} симв.)</strong>
+                        <span style="font-size:11px">Оригинал: стр. ${dup.origLine} [${dup.origChapter}]</span>
+                        <span style="color:var(--error-color); font-size:11px">Дубль: стр. ${dup.dupLine} [${dup.dupChapter}]</span>
+                        <div class="rst-dup-snippet">"${dup.snippet}"</div>
+                    </div>
+                    <button class="rst-btn-upload" style="border-color:var(--accent-color); color:var(--accent-color)">🔍 Сравнить</button>
+                `;
+                item.querySelector('button').addEventListener('click', () => openCompareModal(dup));
+                dupAlert.appendChild(item);
+            });
+            resultsEl.appendChild(dupAlert);
+        }
+
         const totalProblems = currentErrors.reduce((sum, errGroup) => sum + errGroup.errors.length, 0);
 
         if (totalProblems === 0) {
             resultsEl.innerHTML = '<div class="rst-success-message">✅ Проблем не найдено! Файл чист.</div>';
+            copyLLMBtn.style.display = 'none';
             return;
         }
 
+        copyLLMBtn.style.display = 'block';
         const summaryEl = document.createElement('div');
         summaryEl.className = 'rst-error-summary';
         summaryEl.textContent = `⚠️ Найдено проблем: ${totalProblems}`;
@@ -1100,12 +1800,546 @@ document.querySelectorAll('.rst-btn-upload').forEach(button => {
         });
     };
 
+    copyLLMBtn.addEventListener('click', () => {
+        if (currentErrors.length === 0) return;
+
+        let reportText = "Пожалуйста, исправь ошибки в следующих фрагментах текста. Не меняй смысл, исправь только грамматику, стилистику и указанные недочеты:\n\n";
+
+        currentErrors.forEach(group => {
+            const errorDescriptions = group.errors.map(e => `[${e.message}]`).join('; ');
+            // Формат: Строка N: Текст // Ошибки
+            reportText += `Строка ${group.lineNum}: ${group.lineText}\n>>> КОММЕНТАРИЙ: ${errorDescriptions}\n\n`;
+        });
+
+        navigator.clipboard.writeText(reportText).then(() => {
+            const originalText = copyLLMBtn.textContent;
+            copyLLMBtn.textContent = "Скопировано в буфер!";
+            setTimeout(() => copyLLMBtn.textContent = originalText, 2000);
+        }).catch(err => {
+            console.error('Ошибка копирования:', err);
+            alert('Не удалось скопировать текст.');
+        });
+    });
+
+    const fixOverlay = document.getElementById('validator-fix-overlay');
+    const startFixBtn = document.getElementById('validator-fix-btn');
+    const fixQueueList = document.getElementById('fix-queue-list');
+    const fixEditorContainer = document.getElementById('fix-editor-container');
+    const fixEmptyState = document.getElementById('fix-empty-state');
+
+    // Элементы
+    const fixErrorDesc = document.getElementById('fix-current-errors-desc');
+    const fixCategoryFilters = document.getElementById('fix-category-filters');
+    const fixHistoryList = document.getElementById('fix-history-list');
+    const fixProgressCircle = document.getElementById('fix-progress-circle');
+    const fixCountDone = document.getElementById('fix-count-done');
+    const fixCountTotal = document.getElementById('fix-count-total');
+
+    // Элементы настроек списков
+    const fixIgnoreEdit = document.getElementById('fix-ignore-edit');
+    const fixStopEdit = document.getElementById('fix-stop-edit');
+    const fixSaveListsBtn = document.getElementById('fix-save-lists-btn');
+
+    let fixSessionLines = [];
+    let fixTasks = [];
+    let currentTaskIndex = -1;
+    let resolvedCount = 0;
+    let activeCategories = new Set();
+
+    // Табы в сайдбаре
+    document.querySelectorAll('.fix-sidebar-tab').forEach(tab => {
+        tab.addEventListener('click', () => {
+            document.querySelectorAll('.fix-sidebar-tab').forEach(t => t.classList.remove('active'));
+            document.querySelectorAll('.fix-panel').forEach(p => p.classList.remove('active'));
+            tab.classList.add('active');
+            document.getElementById(tab.dataset.tab).classList.add('active');
+        });
+    });
+
+    // Сохранение списков из интерактива
+    fixSaveListsBtn.addEventListener('click', () => {
+        ignoreWordsEl.value = fixIgnoreEdit.value;
+        stopWordsEl.value = fixStopEdit.value;
+        saveSettings(); // Функция из основного скрипта валидатора
+        fixSaveListsBtn.textContent = "Сохранено!";
+        setTimeout(() => fixSaveListsBtn.textContent = "Сохранить словари", 1500);
+    });
+
+    const initFixSession = () => {
+        if (currentErrors.length === 0) return;
+
+        fixSessionLines = sourceTextEl.value.split('\n');
+        fixTasks = [];
+        resolvedCount = 0;
+        fixHistoryList.innerHTML = '';
+
+        // Загрузка списков в редактор
+        fixIgnoreEdit.value = ignoreWordsEl.value;
+        fixStopEdit.value = stopWordsEl.value;
+
+        // Группировка
+        const errorsByLine = new Map();
+        const allCategories = new Set();
+
+        currentErrors.forEach(group => {
+            if (!errorsByLine.has(group.lineNum)) {
+                errorsByLine.set(group.lineNum, {
+                    lineNum: group.lineNum,
+                    originalText: group.lineText,
+                    errors: []
+                });
+            }
+            group.errors.forEach(err => {
+                errorsByLine.get(group.lineNum).errors.push(err);
+                allCategories.add(err.category);
+            });
+        });
+
+        fixTasks = Array.from(errorsByLine.values()).sort((a, b) => a.lineNum - b.lineNum);
+        activeCategories = new Set(allCategories);
+        renderFixFilters(Array.from(allCategories));
+        renderFixList();
+
+        fixOverlay.classList.add('active');
+        updateFixStats();
+
+        if(fixTasks.length > 0) selectFixTask(0);
+    };
+
+    const renderFixFilters = (categories) => {
+        fixCategoryFilters.innerHTML = '';
+        const catNames = { latin: 'Латиница', asian: 'Иероглифы', arabic: 'Араб.', formatting: 'Формат', stopwords: 'Стоп', sequence: 'Порядок', duplicates: 'Дубли', grammar: 'Грамматика' };
+
+        categories.forEach(cat => {
+            const el = document.createElement('div');
+            el.className = 'fix-filter-tag active';
+            el.textContent = catNames[cat] || cat;
+            el.dataset.cat = cat;
+            el.onclick = () => {
+                el.classList.toggle('active');
+                if (el.classList.contains('active')) activeCategories.add(cat);
+                else activeCategories.delete(cat);
+                renderFixList();
+            };
+            fixCategoryFilters.appendChild(el);
+        });
+    };
+
+    const renderFixList = () => {
+        fixQueueList.innerHTML = '';
+
+        fixTasks.forEach((task, index) => {
+            const hasActiveError = task.errors.some(e => activeCategories.has(e.category));
+            if (!hasActiveError) return;
+
+            const el = document.createElement('div');
+            el.className = `fix-item ${task.resolved ? 'resolved' : ''} ${index === currentTaskIndex ? 'active' : ''}`;
+            el.dataset.index = index;
+
+            const errTypes = [...new Set(task.errors.map(e => e.category))].join(', ');
+
+            el.innerHTML = `
+                <div class="fix-item-line">
+                    <span>Стр. ${task.lineNum}</span>
+                    <span style="color: var(--warning-color)">${errTypes}</span>
+                </div>
+                <div class="fix-item-preview">${task.resolved ? '✅ Исправлено' : task.originalText}</div>
+            `;
+            el.onclick = () => selectFixTask(index);
+            fixQueueList.appendChild(el);
+        });
+    };
+
+    const fixUnifiedInput = document.getElementById('fix-unified-input');
+    const fixUnifiedInfo = document.getElementById('fix-unified-info');
+    let currentContextRange = { start: 0, end: 0 }; // Хранит индексы строк, которые сейчас в редакторе
+
+    const selectFixTask = (index) => {
+        currentTaskIndex = index;
+        const task = fixTasks[index];
+
+        // Подсветка в списке
+        document.querySelectorAll('.fix-item').forEach(el => el.classList.remove('active'));
+        const listItem = fixQueueList.querySelector(`.fix-item[data-index="${index}"]`);
+        if (listItem) {
+            listItem.classList.add('active');
+            listItem.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
+
+        fixEmptyState.style.display = 'none';
+        fixEditorContainer.style.display = 'flex'; // Flex для растягивания
+
+        const lineIdx = task.lineNum - 1; // 0-based index
+
+        // Описание ошибок
+        const messages = task.errors.filter(e => activeCategories.has(e.category)).map(e => `• ${e.message}`).join('<br>');
+        fixErrorDesc.innerHTML = messages || 'Ошибки в скрытых категориях';
+
+        // Вычисляем диапазон (Текущая - 2 ... Текущая + 2)
+        // Учитываем границы файла
+        const startIdx = Math.max(0, lineIdx - 2);
+        const endIdx = Math.min(fixSessionLines.length - 1, lineIdx + 2);
+
+        currentContextRange = { start: startIdx, end: endIdx };
+
+        // Собираем текст из массива строк
+        const textBlock = fixSessionLines.slice(startIdx, endIdx + 1).join('\n');
+
+        fixUnifiedInput.value = textBlock;
+        fixUnifiedInfo.textContent = `Редактирование строк ${startIdx + 1} - ${endIdx + 1} (Ошибка на ${task.lineNum})`;
+
+        fixUnifiedInput.focus();
+    };
+
+    const applyFix = () => {
+        if (currentTaskIndex === -1) return;
+        const task = fixTasks[currentTaskIndex];
+
+        // Получаем новый текст и разбиваем на строки
+        const newText = fixUnifiedInput.value;
+        // Разбиваем по переносу строки, учитывая разные форматы (CRLF, LF)
+        const newLines = newText.split(/\r?\n/);
+
+        const { start, end } = currentContextRange;
+        const oldLength = end - start + 1;
+        const newLength = newLines.length;
+        const lengthDiff = newLength - oldLength;
+
+        // 1. Внедряем изменения в основной массив (SPLICE заменяет старый кусок на новый)
+        fixSessionLines.splice(start, oldLength, ...newLines);
+
+        // 2. Если количество строк изменилось, нужно сдвинуть lineNum у всех ПОСЛЕДУЮЩИХ задач
+        if (lengthDiff !== 0) {
+            // Проходим по всем задачам
+            for (let i = 0; i < fixTasks.length; i++) {
+                // Если задача ссылается на строку, которая идет ПОСЛЕ текущего диапазона редактирования
+                if (fixTasks[i].lineNum > (end + 1)) {
+                    fixTasks[i].lineNum += lengthDiff;
+                }
+                // (Опционально) Если задача была внутри удаленного диапазона, она может стать некорректной,
+                // но для простоты мы просто сдвигаем "хвост".
+            }
+            // Обновляем текущую задачу тоже, если вдруг мы решили вернуться к ней позже,
+            // хотя логика "следующая задача" переключит нас дальше.
+        }
+
+        // Маркируем как решенное
+        if (!task.resolved) {
+            task.resolved = true;
+            resolvedCount++;
+            const histItem = document.createElement('div');
+            histItem.className = 'fix-history-item';
+            histItem.innerHTML = `Стр. ${task.lineNum} (исходная) изменена <span>${new Date().toLocaleTimeString()}</span>`;
+            fixHistoryList.prepend(histItem);
+        }
+
+        updateFixStats();
+        // Перерисовываем список, так как номера строк могли измениться (визуально можно не обновлять текст, но лучше обновить данные)
+        // Чтобы не сбрасывать скролл, можно просто обновить lineNum внутри DOM, но проще перерисовать при следующем открытии.
+        // Для текущей сессии просто идем дальше.
+
+        findNextTask();
+    };
+
+    // Обработчик Ctrl+Enter
+    fixUnifiedInput.addEventListener('keydown', (e) => {
+        if (e.ctrlKey && e.key === 'Enter') {
+            e.preventDefault();
+            applyFix();
+        }
+    });
+
+    const findNextTask = () => {
+        let nextIndex = -1;
+        for (let i = currentTaskIndex + 1; i < fixTasks.length; i++) {
+            const task = fixTasks[i];
+            const hasActiveError = task.errors.some(e => activeCategories.has(e.category));
+            if (!task.resolved && hasActiveError) {
+                nextIndex = i;
+                break;
+            }
+        }
+        if (nextIndex !== -1) selectFixTask(nextIndex);
+        else alert('Все видимые ошибки проверены!');
+    };
+
+    const updateFixStats = () => {
+        const filteredTasks = fixTasks.filter(t => t.errors.some(e => activeCategories.has(e.category)));
+        const total = filteredTasks.length;
+        const done = filteredTasks.filter(t => t.resolved).length;
+
+        fixCountDone.textContent = done;
+        fixCountTotal.textContent = total;
+        const percent = total > 0 ? Math.round((done / total) * 100) : 100;
+        fixProgressCircle.textContent = `${percent}%`;
+        fixProgressCircle.style.background = `conic-gradient(var(--accent-color) ${percent * 3.6}deg, transparent 0deg)`;
+    };
+
+    // Слушатели
+    startFixBtn.addEventListener('click', initFixSession);
+
+    document.getElementById('fix-cancel-btn').addEventListener('click', () => {
+        if (confirm('Закрыть без сохранения изменений в исходном поле?')) {
+            fixOverlay.classList.remove('active');
+        }
+    });
+
+    document.getElementById('fix-finish-btn').addEventListener('click', () => {
+        sourceTextEl.value = fixSessionLines.join('\n');
+        fixOverlay.classList.remove('active');
+        sourceTextEl.dispatchEvent(new Event('input'));
+        // При желании можно перезапустить runValidation() здесь
+    });
+
+    document.getElementById('fix-apply-btn').addEventListener('click', applyFix);
+    document.getElementById('fix-skip-btn').addEventListener('click', () => findNextTask());
+
+    // Наблюдатель для кнопки старта (чтобы она появлялась только если есть ошибки)
+    const observer = new MutationObserver(() => {
+         if (resultsEl.innerHTML.includes('Найдено проблем')) {
+             startFixBtn.style.display = 'inline-block';
+         } else {
+             startFixBtn.style.display = 'none';
+         }
+    });
+    observer.observe(resultsEl, { childList: true, subtree: true });
+
+    const validatorCopyBtn = document.getElementById('validator-copy-text-btn');
+
+    validatorCopyBtn.addEventListener('click', async () => {
+        const textLength = sourceTextEl.value.length;
+        if (textLength === 0) return;
+
+        const originalText = validatorCopyBtn.textContent;
+        validatorCopyBtn.textContent = "⏳ Копирование...";
+        validatorCopyBtn.disabled = true;
+
+        try {
+            await navigator.clipboard.writeText(sourceTextEl.value);
+
+            validatorCopyBtn.textContent = `✅ Скопировано (${(textLength / 1000000).toFixed(1)} млн симв.)`;
+            validatorCopyBtn.style.backgroundColor = 'var(--success-color)';
+            validatorCopyBtn.style.color = 'white';
+        } catch (err) {
+            console.error('Ошибка копирования:', err);
+            validatorCopyBtn.textContent = "❌ Ошибка (см. консоль)";
+            sourceTextEl.select();
+            document.execCommand('copy');
+        }
+
+        setTimeout(() => {
+            validatorCopyBtn.textContent = originalText;
+            validatorCopyBtn.disabled = false;
+            validatorCopyBtn.style.backgroundColor = '';
+            validatorCopyBtn.style.color = 'var(--success-color)';
+        }, 2000);
+    });
+
+
+
+
+
     loadSettings();
     [ignoreWordsEl, stopWordsEl].forEach(el => el.addEventListener('input', saveSettings));
     Object.values(checks).forEach(el => el.addEventListener('change', saveSettings));
     processBtn.addEventListener('click', runValidation);
     clearBtn.addEventListener('click', () => { sourceTextEl.value = ''; });
     groupingRadios.forEach(radio => radio.addEventListener('change', () => { if (currentErrors.length > 0) displayResults(); }));
+
+    const dupModal = document.getElementById('dup-compare-modal');
+    const dupCloseBtn = document.getElementById('dup-close-btn');
+    const dupCancelBtn = document.getElementById('dup-cancel-btn');
+    const dupTextOrig = document.getElementById('dup-text-orig');
+    const dupTextCopy = document.getElementById('dup-text-copy');
+
+    const closeDupModal = () => dupModal.classList.remove('active');
+    dupCloseBtn.addEventListener('click', closeDupModal);
+    dupCancelBtn.addEventListener('click', closeDupModal);
+
+    const openCompareModal = (dupData) => {
+        const fullText = sourceTextEl.value;
+        const contextPadding = 500; // Символов контекста до и после
+
+        // Функция для подсветки
+        const formatContext = (start, length, isTarget) => {
+            const contextStart = Math.max(0, start - contextPadding);
+            const contextEnd = Math.min(fullText.length, start + length + contextPadding);
+
+            const before = fullText.substring(contextStart, start);
+            const target = fullText.substr(start, length);
+            const after = fullText.substring(start + length, contextEnd);
+
+            const div = document.createElement('div');
+            // Экранируем HTML
+            const escape = (s) => s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
+
+            div.innerHTML = `
+                <span style="opacity:0.6">${escape(before)}</span>
+                <span class="${isTarget ? 'dup-target-highlight' : 'dup-highlight'}">
+                    <b>${escape(target)}</b>
+                </span>
+                <span style="opacity:0.6">${escape(after)}</span>
+            `;
+            return div;
+        };
+
+        dupTextOrig.innerHTML = '';
+        dupTextCopy.innerHTML = '';
+
+        dupTextOrig.appendChild(formatContext(dupData.origStart, dupData.length, false));
+        dupTextCopy.appendChild(formatContext(dupData.dupStart, dupData.length, true));
+
+        // Скролл к выделению
+        setTimeout(() => {
+            dupTextOrig.querySelector('.dup-highlight').scrollIntoView({block: "center"});
+            dupTextCopy.querySelector('.dup-target-highlight').scrollIntoView({block: "center"});
+        }, 100);
+
+        dupModal.classList.add('active');
+    };
+
+    (() => {
+    const sourceEl = document.getElementById('sum-source-text');
+    const resultEl = document.getElementById('sum-result-text');
+    const slider = document.getElementById('sum-ratio-slider');
+    const sliderVal = document.getElementById('sum-ratio-val');
+    const processBtn = document.getElementById('sum-process-btn');
+    const pasteBtn = document.getElementById('sum-paste-btn');
+    const copyBtn = document.getElementById('sum-copy-btn');
+    const statsEl = document.getElementById('sum-stats');
+
+    // Обновление значения слайдера
+    slider.addEventListener('input', () => {
+        sliderVal.textContent = slider.value + '%';
+    });
+
+    // Вставка из буфера
+    pasteBtn.addEventListener('click', async () => {
+        try {
+            const text = await navigator.clipboard.readText();
+            sourceEl.value = text;
+        } catch (err) {
+            alert('Нет доступа к буферу обмена. Вставьте текст вручную (Ctrl+V).');
+        }
+    });
+
+    // Копирование результата
+    copyBtn.addEventListener('click', () => {
+        resultEl.select();
+        document.execCommand('copy');
+        const oldText = copyBtn.textContent;
+        copyBtn.textContent = "Скопировано!";
+        setTimeout(() => copyBtn.textContent = oldText, 2000);
+    });
+
+    // === АЛГОРИТМ ПЕРЕСКАЗА ===
+    const generateSummary = () => {
+        const text = sourceEl.value.trim();
+        if (!text) return;
+
+        processBtn.textContent = "Обработка...";
+        processBtn.disabled = true;
+
+        // Даем браузеру отрисовать интерфейс перед тяжелой задачей
+        setTimeout(() => {
+            const ratio = parseInt(slider.value, 10) / 100;
+
+            // 1. Разбивка на предложения (учитываем сокращения - это упрощенная регулярка)
+            // Ищем точку, воскл или вопр знак, за которыми следует пробел и заглавная буква или конец строки
+            const rawSentences = text.match(/[^.!?\n]+[.!?\n]+(\s|$)/g) || text.split('\n');
+
+            // Очищаем предложения
+            const sentences = rawSentences.map((s, index) => ({
+                id: index,
+                text: s.trim(),
+                words: [],
+                score: 0
+            })).filter(s => s.text.length > 20); // Игнорируем слишком короткий мусор
+
+            // 2. Список стоп-слов (русский + английский) для фильтрации шума
+            const stopWords = new Set([
+                "и", "в", "во", "не", "на", "я", "с", "он", "что", "а", "по", "к", "она", "мы", "о", "об",
+                "они", "за", "у", "вы", "же", "то", "из", "но", "ты", "от", "мне", "еще", "нет", "да",
+                "или", "только", "если", "для", "уже", "бы", "был", "была", "были", "было", "себя",
+                "как", "так", "когда", "где", "эта", "этот", "эти", "том", "там", "тут", "ну", "со",
+                "the", "a", "an", "in", "on", "at", "to", "is", "are", "was", "were", "of", "and", "or"
+            ]);
+
+            // 3. Токенизация и подсчет частот слов (TF)
+            const wordFrequencies = {};
+
+            sentences.forEach(s => {
+                // Разбиваем на слова, убираем знаки препинания, приводим к нижнему регистру
+                const tokens = s.text.toLowerCase().match(/[a-zа-яё0-9]+/g);
+                if (tokens) {
+                    s.words = tokens.filter(w => !stopWords.has(w) && w.length > 2);
+                    s.words.forEach(w => {
+                        // Если есть библиотека AZ.js, можно приводить к начальной форме (стемминг),
+                        // но для скорости пока берем как есть
+                        wordFrequencies[w] = (wordFrequencies[w] || 0) + 1;
+                    });
+                }
+            });
+
+            // 4. Взвешивание предложений
+            sentences.forEach(s => {
+                s.words.forEach(w => {
+                    // Вес предложения = сумма частот входящих в него слов
+                    if (wordFrequencies[w]) {
+                        s.score += wordFrequencies[w];
+                    }
+                });
+                // Нормализация: делим на количество слов, чтобы длинные предложения не побеждали всегда.
+                // Но делаем мягкую нормализацию (делим не на N, а на корень из N),
+                // чтобы длинные насыщенные предложения все же имели преимущество.
+                if (s.words.length > 0) {
+                    s.score = s.score / Math.pow(s.words.length, 0.5);
+                }
+            });
+
+            // 5. Отбор лучших предложений
+            // Сортируем по весу убывания
+            const sortedByScore = [...sentences].sort((a, b) => b.score - a.score);
+
+            // Вычисляем, сколько оставить
+            const countToKeep = Math.max(1, Math.ceil(sentences.length * ratio));
+            const topSentences = sortedByScore.slice(0, countToKeep);
+
+            // 6. Восстановление хронологии
+            // Сортируем выбранные предложения обратно по их индексу в исходном тексте
+            topSentences.sort((a, b) => a.id - b.id);
+
+            // 7. Сборка результата
+            // Добавляем двойной перенос строки, если предложения были далеко друг от друга (абзацы)
+            let resultText = "";
+            let lastIdx = -1;
+
+            topSentences.forEach(s => {
+                 // Если разрыв между предложениями большой, добавляем пустую строку для читаемости
+                if (lastIdx !== -1 && s.id > lastIdx + 1) {
+                    resultText += "\n\n[...] ";
+                } else if (lastIdx !== -1) {
+                    resultText += " ";
+                }
+                resultText += s.text;
+                lastIdx = s.id;
+            });
+
+            resultEl.value = resultText;
+
+            // Статистика
+            const inputChars = text.length;
+            const outputChars = resultText.length;
+            const compression = Math.round((1 - (outputChars / inputChars)) * 100);
+            statsEl.textContent = `Исходно: ${sentences.length} предложений. Оставлено: ${countToKeep}. Сжато на ${compression}% по объему.`;
+
+            processBtn.textContent = "⚡ Выполнить математическое сжатие";
+            processBtn.disabled = false;
+        }, 50); // Небольшая задержка для рендера UI
+    };
+
+    processBtn.addEventListener('click', generateSummary);
+    })();
 
 })();
 })();

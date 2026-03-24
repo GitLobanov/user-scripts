@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Rulate Manager (Lite + Export/Import)
+// @name         Rulate Manager (Lite + Export/Import + Calendar)
 // @namespace    http://tampermonkey.net/
-// @version      31.0
-// @description  Менеджер с напоминаниями, рекламой, поиском, экспортом/импортом. (Без статистики и топов)
+// @version      34.0
+// @description  Менеджер с напоминаниями, рекламой, поиском, экспортом/импортом, календарем и изменением глав.
 // @author       You
 // @match        *://tl.rulate.ru/*
 // @run-at       document-end
@@ -29,7 +29,6 @@ const currentBookId = getCurrentBookId();
 const KEYS = {
     BOOKS: 'rulate_saved_books_v3',
     BLOCKED: 'rulate_blocked_books',
-    // STATS удален
     CHECKED: 'rulate_checked_ids',
     AUTO_LIKE_BOOK: 'rulate_setting_autolike_book',
     AUTO_LIKE_CHAPTER: 'rulate_setting_autolike_chapter',
@@ -67,7 +66,7 @@ let checkedIds = JSON.parse(localStorage.getItem(KEYS.CHECKED) || '[]');
 let adPresets = JSON.parse(localStorage.getItem(KEYS.AD_PRESETS) || '[]');
 let coverCache = JSON.parse(localStorage.getItem(KEYS.COVER_CACHE) || '{}');
 let reminders = JSON.parse(localStorage.getItem(KEYS.REMINDERS) || '[]');
-let reminderOpts = JSON.parse(localStorage.getItem(KEYS.REMINDER_OPTS) || '{"snoozeDefault": 10}');
+let reminderOpts = JSON.parse(localStorage.getItem(KEYS.REMINDER_OPTS) || '{"snoozeDefault": 10, "disableNotifications": false}');
 
 const DEFAULT_COMPLEX_OPTS = { enabled: false, stepsNext: 10, stepsPrev: 10, cyclic: false, noBack: false };
 const DEFAULT_COMPLEX_STATE = { dir: 'next', count: 0 };
@@ -168,6 +167,7 @@ style.innerHTML = `
     .r-rem-card { background: rgba(255,255,255,0.05); border-radius: 5px; padding: 8px; margin-bottom: 5px; border-left: 3px solid #666; display: flex; justify-content: space-between; align-items: center; }
     .r-rem-card.wait { border-color: #ffc107; }
     .r-rem-card.done { border-color: #28a745; opacity: 0.6; }
+    .r-rem-card.wait.overdue-severe { border-color: #dc3545; background: rgba(220, 53, 69, 0.15); }
     .r-rem-time { font-weight: bold; font-size: 13px; color: #fff; margin-right: 10px; }
     .r-rem-name { font-size: 12px; color: #61dafb; flex: 1; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; text-decoration: none; transition: 0.2s; }
     .r-rem-name:hover { color: #fff; text-decoration: underline; }
@@ -190,10 +190,24 @@ style.innerHTML = `
     .r-drawer-content { flex: 1; overflow-y: auto; padding: 10px; }
 
     .r-missing-card { background: rgba(255,255,255,0.05); padding: 5px; border-radius: 4px; margin-bottom: 5px; border-left: 3px solid #dc3545; font-size: 11px; }
-    .r-missing-actions { display: flex; gap: 5px; margin-top: 5px; }
+    .r-missing-card.overdue-severe { border-color: #dc3545; background: rgba(220, 53, 69, 0.15); }
+    .r-missing-actions { display: flex; gap: 5px; margin-top: 5px; align-items: center; }
+    .r-missing-date { font-size: 10px; color: #888; margin-bottom: 4px; }
 
     .r-status-icon { cursor: pointer; margin-right: 5px; font-size: 14px; user-select: none; }
     .r-status-finished { opacity: 0.5; text-decoration: line-through; color: #aaa; }
+
+    /* CALENDAR STYLES */
+    .r-cal-overlay { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.8); z-index: 100005; display: none; align-items: center; justify-content: center; backdrop-filter: blur(5px); }
+    .r-cal-modal { background: #212529; border: 1px solid #444; border-radius: 10px; width: 800px; max-width: 95vw; max-height: 90vh; display: flex; flex-direction: column; box-shadow: 0 10px 30px rgba(0,0,0,0.8); }
+    .r-cal-header { padding: 15px; border-bottom: 1px solid #444; display: flex; justify-content: space-between; align-items: center; font-weight: bold; font-size: 16px; color: #fff; }
+    .r-cal-body { padding: 15px; overflow-y: auto; display: grid; grid-template-columns: repeat(auto-fill, minmax(220px, 1fr)); gap: 10px; }
+    .r-cal-day { background: rgba(255,255,255,0.05); border: 1px solid #555; border-radius: 5px; padding: 10px; display: flex; flex-direction: column; transition: 0.2s; }
+    .r-cal-day:hover { background: rgba(255,255,255,0.1); }
+    .r-cal-day.warn { border-color: #ffc107; background: rgba(255, 193, 7, 0.1); }
+    .r-cal-day.danger { border-color: #dc3545; background: rgba(220, 53, 69, 0.15); }
+    .r-cal-date { font-weight: bold; margin-bottom: 10px; border-bottom: 1px solid #555; padding-bottom: 5px; color: #61dafb; display:flex; justify-content:space-between; align-items: center;}
+    .r-cal-task { font-size: 11px; color: #ddd; margin-bottom: 5px; background: rgba(0,0,0,0.3); padding: 5px; border-radius: 3px; border-left: 2px solid #28a745; }
 `;
 document.head.appendChild(style);
 
@@ -209,6 +223,20 @@ const notifDiv = document.createElement('div');
 notifDiv.className = 'r-notification';
 notifDiv.style.display = 'none';
 document.body.appendChild(notifDiv);
+
+// Calendar Modal Element
+const calOverlay = document.createElement('div');
+calOverlay.className = 'r-cal-overlay';
+calOverlay.innerHTML = `
+    <div class="r-cal-modal">
+        <div class="r-cal-header">
+            <span>📅 Календарь задач</span>
+            <button id="btn_close_cal" style="background:none; border:none; color:#fff; cursor:pointer; font-size:18px;">✖</button>
+        </div>
+        <div class="r-cal-body" id="cal_body_container"></div>
+    </div>
+`;
+document.body.appendChild(calOverlay);
 
 menuDiv.innerHTML = `
     <div class="r-tabs">
@@ -246,6 +274,11 @@ menuDiv.innerHTML = `
     </div>
 
     <div class="r-content" id="content8">
+        <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+            <input type="text" id="rem_search_inp" placeholder="🔍 Поиск в напоминаниях..." class="r-input" style="margin-bottom:0; flex:1; margin-right:10px;">
+            <button id="btn_open_calendar" class="r-btn" style="background: #007bff; width: auto; padding: 7px 15px; margin:0;">📅 Календарь</button>
+        </div>
+
         <div style="background:rgba(0,0,0,0.2); padding:10px; border-radius:5px; margin-bottom:10px;">
             <button id="btn_toggle_missing" class="r-btn" style="background: #6f42c1; margin-bottom: 10px;">🔍 Книги без напоминаний</button>
 
@@ -265,14 +298,26 @@ menuDiv.innerHTML = `
                 <input type="text" id="rem_custom_text_inp" class="r-input" placeholder="Текст напоминания (напр. 'День книг с рейтингом R')">
              </div>
 
-             <div style="display:flex; gap:5px; margin-top:5px;">
-                 <input type="datetime-local" id="rem_date_inp" class="r-input">
-                 <button id="btn_add_rem" class="r-btn" style="width:auto; margin:0; background:#28a745;">+</button>
+             <div style="display:flex; gap:5px; margin-top:5px; align-items:center;">
+                 <input type="datetime-local" id="rem_date_inp" class="r-input" style="flex:1;">
+                 <button id="btn_add_rem" class="r-btn" style="width:auto; margin:0; background:#28a745; padding:8px 15px;">+</button>
              </div>
-             <div style="font-size:10px; color:#777; margin-top:5px; display:flex; align-items:center;">
+
+             <div style="display:flex; gap:10px; margin-top:5px; align-items:center; background:rgba(0,0,0,0.1); padding:5px; border-radius:4px;">
+                <input type="number" id="rem_chap_inp" class="r-input" placeholder="Кол-во глав" style="width:100px; margin:0; padding:4px;">
+                <label style="font-size:11px; color:#ccc; cursor:pointer; display:flex; align-items:center;">
+                    <input type="checkbox" id="rem_chap_auto" style="margin-right:5px;">По мере выхода
+                </label>
+             </div>
+
+             <div style="font-size:10px; color:#777; margin-top:10px; display:flex; align-items:center;">
                 <span>Кнопка отложить (мин):</span>
                 <input type="number" id="inp_snooze_def" value="${reminderOpts.snoozeDefault}" class="r-input" style="width:50px; padding:2px; margin:0 5px; height:auto;">
              </div>
+             <label style="display:flex; align-items:center; font-size:11px; margin-top:5px; cursor:pointer; color:#aaa;">
+                 <input type="checkbox" id="chk_disable_notif" ${reminderOpts.disableNotifications ? 'checked' : ''}>
+                 <span style="margin-left:8px;">🔕 Без всплывающих уведомлений</span>
+             </label>
         </div>
 
         <div class="r-list" style="height:320px; max-height:320px;">
@@ -312,9 +357,10 @@ menuDiv.innerHTML = `
                 </div>
             </div>
         </div>
-        <div style="font-size:12px; color:#aaa; margin-bottom:5px; margin-top:5px; display:flex; justify-content:space-between;">
+        <div style="font-size:12px; color:#aaa; margin-bottom:5px; margin-top:5px; display:flex; justify-content:space-between; align-items:center;">
             <span>Книги для рекламы:</span>
         </div>
+        <input type="text" id="ad_search_inp" placeholder="🔍 Поиск книги..." class="r-input" style="margin-bottom:5px;">
         <div class="r-list" id="ad_list_container" style="max-height:180px;"></div>
         <button id="btn_gen_ad" class="r-btn" style="background: linear-gradient(90deg, #28a745, #17a2b8);">✨ Сгенерировать код</button>
         <button id="btn_clear_covers" class="r-btn" style="background: #dc3545; margin-top: 5px; font-size: 12px;">🗑️ Сбросить кэш обложек (искать заново)</button>
@@ -425,6 +471,13 @@ menuDiv.innerHTML = `
             <span>Без напоминаний</span>
             <button id="btn_close_drawer" style="background:none; border:none; color:#fff; cursor:pointer;">✖</button>
         </div>
+        <div style="padding: 5px 10px; background: rgba(0,0,0,0.2); border-bottom: 1px solid #444;">
+            <input type="text" id="missing_search_inp" placeholder="🔍 Поиск..." class="r-input" style="margin-bottom:5px; font-size:11px; padding:4px;">
+            <select id="missing_sort_sel" class="r-select" style="margin-bottom:0; font-size:11px; padding:4px;">
+                <option value="old">Сначала старые</option>
+                <option value="new">Сначала новые</option>
+            </select>
+        </div>
         <div class="r-drawer-content" id="missing_rem_list"></div>
     </div>
 `;
@@ -478,6 +531,7 @@ menuDiv.addEventListener('click', (e) => {
     }
     if (t.classList.contains('r-preset-load')) {
         const idx = t.dataset.index;
+        // Обновляем список, передавая сохраненные ID
         renderAdBookList(adPresets[idx].ids);
         return;
     }
@@ -486,13 +540,78 @@ menuDiv.addEventListener('click', (e) => {
         const idx = parseInt(actBtn.dataset.index);
         const action = actBtn.dataset.action;
 
-        // Reminder actions
         if (action === 'rem_del') {
             reminders.splice(idx, 1);
             localStorage.setItem(KEYS.REMINDERS, JSON.stringify(reminders));
             renderReminders();
             return;
         }
+
+        if (action === 'rem_edit_time') {
+            const reminder = reminders[idx];
+            const d = new Date(reminder.time);
+            d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+            const localIso = d.toISOString().slice(0, 16);
+
+            const parentCard = actBtn.closest('.r-rem-card');
+            parentCard.innerHTML = `
+                <div style="display:flex; align-items:center; width:100%; gap:5px;">
+                    <span style="font-size:11px; color:#aaa;">Перенос:</span>
+                    <input type="datetime-local" id="edit_rem_date_${idx}" value="${localIso}" class="r-input" style="padding:2px; height:auto; margin:0; flex:1;">
+                    <button class="r-btn r-act-btn" style="width:auto; margin:0; padding:2px 8px; background:#28a745;" data-action="rem_save_time" data-index="${idx}">💾</button>
+                    <button class="r-btn r-act-btn" style="width:auto; margin:0; padding:2px 8px; background:#6c757d;" data-action="rem_cancel_edit">✖</button>
+                </div>
+            `;
+            return;
+        }
+
+        // РЕДАКТИРОВАНИЕ ГЛАВ ИЗ ВКЛАДКИ НАПОМИНАНИЙ
+        if (action === 'rem_edit_chaps') {
+            const reminder = reminders[idx];
+            const currentVal = reminder.chapters || '';
+            const chapContainer = actBtn.closest('.rem-chap-container');
+            if (chapContainer) {
+                 chapContainer.innerHTML = `
+                    <input type="text" id="edit_rem_chaps_${idx}" value="${currentVal}" class="r-input" style="padding:2px; height:auto; margin:0; width:60px; font-size:10px;" placeholder="Число/auto">
+                    <button class="r-btn r-act-btn" style="width:auto; margin:0 2px; padding:2px 5px; background:#28a745; font-size:10px; min-width:unset;" data-action="rem_save_chaps" data-index="${idx}">💾</button>
+                    <button class="r-btn r-act-btn" style="width:auto; margin:0; padding:2px 5px; background:#6c757d; font-size:10px; min-width:unset;" data-action="rem_cancel_edit">✖</button>
+                 `;
+            }
+            return;
+        }
+
+        if (action === 'rem_save_chaps') {
+            const input = document.getElementById(`edit_rem_chaps_${idx}`);
+            if(!input) return;
+            const newVal = input.value.trim().toLowerCase();
+            let finalChaps = 0;
+            if (newVal === 'auto' || newVal === 'ауто' || newVal === 'авто') {
+                finalChaps = 'auto';
+            } else if (parseInt(newVal) > 0) {
+                finalChaps = parseInt(newVal);
+            }
+            reminders[idx].chapters = finalChaps;
+            localStorage.setItem(KEYS.REMINDERS, JSON.stringify(reminders));
+            renderReminders();
+            if (document.getElementById('cal_body_container').innerHTML !== '') renderCalendar();
+            return;
+        }
+
+        if (action === 'rem_cancel_edit') {
+            renderReminders();
+            return;
+        }
+
+        if (action === 'rem_save_time') {
+            const newDateVal = document.getElementById(`edit_rem_date_${idx}`).value;
+            if (!newDateVal) return alert('Укажите время');
+            reminders[idx].time = new Date(newDateVal).toISOString();
+            reminders[idx].status = 'scheduled';
+            localStorage.setItem(KEYS.REMINDERS, JSON.stringify(reminders));
+            renderReminders();
+            return;
+        }
+
         if (action === 'rem_finish') {
              reminders.splice(idx, 1);
              localStorage.setItem(KEYS.REMINDERS, JSON.stringify(reminders));
@@ -525,7 +644,7 @@ menuDiv.addEventListener('click', (e) => {
             return;
         }
         localStorage.setItem(KEYS.BOOKS,JSON.stringify(savedBooks));
-        renderBookList(); renderBlockList(); updateSimSelect(); renderAdBookList(); updateRemSelect();
+        renderBookList(); renderBlockList(); updateSimSelect(); updateAdListSearch(); updateRemSelect();
         return;
     }
     if (t.classList.contains('r-status-icon')) {
@@ -534,8 +653,48 @@ menuDiv.addEventListener('click', (e) => {
         savedBooks[idx].status = (current === 'process') ? 'finished' : 'process';
         localStorage.setItem(KEYS.BOOKS, JSON.stringify(savedBooks));
         renderBookList();
-        renderMissingReminders(); // Обновляем список "без напоминаний"
+        renderMissingReminders();
         return;
+    }
+});
+
+// ОБРАБОТЧИК КЛИКОВ В ОКНЕ КАЛЕНДАРЯ (РЕДАКТИРОВАНИЕ ГЛАВ)
+calOverlay.addEventListener('click', (e) => {
+    const t = e.target;
+    const action = t.dataset.action;
+    if (!action) return;
+
+    const idx = parseInt(t.dataset.index);
+
+    if (action === 'cal_edit_chaps') {
+        const reminder = reminders[idx];
+        const currentVal = reminder.chapters || '';
+        const container = t.closest('.cal-chap-container');
+        if(container) {
+            container.innerHTML = `
+                <input type="text" id="edit_cal_chaps_${idx}" value="${currentVal}" class="r-input" style="padding:2px; height:auto; margin:0; width:60px; font-size:10px;" placeholder="Число/auto">
+                <button class="r-btn" style="width:auto; margin:0 2px; padding:2px 5px; background:#28a745; font-size:10px; min-width:unset;" data-action="cal_save_chaps" data-index="${idx}">💾</button>
+                <button class="r-btn" style="width:auto; margin:0; padding:2px 5px; background:#6c757d; font-size:10px; min-width:unset;" data-action="cal_cancel_edit">✖</button>
+            `;
+        }
+    }
+    else if (action === 'cal_save_chaps') {
+        const input = document.getElementById(`edit_cal_chaps_${idx}`);
+        if(!input) return;
+        const newVal = input.value.trim().toLowerCase();
+        let finalChaps = 0;
+        if (newVal === 'auto' || newVal === 'ауто' || newVal === 'авто') {
+            finalChaps = 'auto';
+        } else if (parseInt(newVal) > 0) {
+            finalChaps = parseInt(newVal);
+        }
+        reminders[idx].chapters = finalChaps;
+        localStorage.setItem(KEYS.REMINDERS, JSON.stringify(reminders));
+        renderCalendar();
+        renderReminders();
+    }
+    else if (action === 'cal_cancel_edit') {
+        renderCalendar();
     }
 });
 
@@ -585,8 +744,11 @@ function renderBookList() {
 }
 function renderAdBookList(selectedIds = []) {
     const c = document.getElementById('ad_list_container'); c.innerHTML = '';
+    const sv = document.getElementById('ad_search_inp').value.toLowerCase();
     if(savedBooks.length===0){c.innerHTML='<div style="text-align:center;padding:10px;color:#777;">Список пуст</div>';return;}
+
     savedBooks.forEach((b)=>{
+        if(sv && !b.name.toLowerCase().includes(sv)) return;
         const isSel = selectedIds.includes(b.id);
         const d = document.createElement('div'); d.className='r-row';
         d.innerHTML = `
@@ -598,6 +760,12 @@ function renderAdBookList(selectedIds = []) {
         c.appendChild(d);
     });
 }
+function updateAdListSearch() {
+    const currentlySelected = Array.from(document.querySelectorAll('.ad-sel:checked')).map(e => e.dataset.id);
+    renderAdBookList(currentlySelected);
+}
+document.getElementById('ad_search_inp').onkeyup = updateAdListSearch;
+
 function renderPresets() {
     const c = document.getElementById('ad_presets_container'); c.innerHTML='';
     adPresets.forEach((p, i) => {
@@ -655,11 +823,19 @@ document.getElementById('inp_mass_delay').onchange=(e)=>{actionDelay=parseInt(e.
 
 
 // ==========================================
-// ЛОГИКА НАПОМИНАНИЙ (REMINDERS)
+// ЛОГИКА НАПОМИНАНИЙ (REMINDERS) И КАЛЕНДАРЯ
 // ==========================================
 document.getElementById('inp_snooze_def').onchange = (e) => {
     reminderOpts.snoozeDefault = parseInt(e.target.value) || 10;
     localStorage.setItem(KEYS.REMINDER_OPTS, JSON.stringify(reminderOpts));
+};
+document.getElementById('chk_disable_notif').onchange = (e) => {
+    reminderOpts.disableNotifications = e.target.checked;
+    localStorage.setItem(KEYS.REMINDER_OPTS, JSON.stringify(reminderOpts));
+};
+
+document.getElementById('rem_chap_auto').onchange = (e) => {
+    document.getElementById('rem_chap_inp').disabled = e.target.checked;
 };
 
 const chkCustomRem = document.getElementById('chk_custom_rem');
@@ -692,24 +868,46 @@ document.getElementById('rem_book_search').onkeyup = (e) => {
 function renderMissingReminders() {
     const c = document.getElementById('missing_rem_list');
     c.innerHTML = '';
-    const activeBookIds = reminders.map(r => String(r.bookId)); // ID книг с напоминаниями
-    const missing = savedBooks.filter(b => {
+    const sv = document.getElementById('missing_search_inp').value.toLowerCase();
+    const sortOrder = document.getElementById('missing_sort_sel').value;
+
+    const activeBookIds = reminders.map(r => String(r.bookId));
+    let missing = savedBooks.filter(b => {
         if (b.status === 'finished') return false;
+        if (sv && !b.name.toLowerCase().includes(sv)) return false;
         return !activeBookIds.includes(String(b.id));
     });
 
+    // Sort
+    missing.sort((a, b) => {
+        const tA = a.dateAdded || 0;
+        const tB = b.dateAdded || 0;
+        return sortOrder === 'new' ? tB - tA : tA - tB;
+    });
+
     if (missing.length === 0) {
-        c.innerHTML = '<div style="text-align:center; color:#777; margin-top:20px;">Все активные книги имеют напоминания! 🎉</div>';
+        c.innerHTML = '<div style="text-align:center; color:#777; margin-top:20px;">Список пуст 🎉</div>';
         return;
     }
 
     missing.forEach(b => {
         const d = document.createElement('div');
         d.className = 'r-missing-card';
+
+        const daysPassed = Math.floor((Date.now() - (b.dateAdded || Date.now())) / 86400000);
+        let overdueText = '';
+        if (daysPassed > 6) {
+            d.classList.add('overdue-severe');
+            overdueText = `<span style="color:#ff6b6b; font-weight:bold; margin-left:5px;">(Просрок: ${daysPassed} дн.)</span>`;
+        }
+
+        const dateStrText = b.dateAdded ? new Date(b.dateAdded).toLocaleDateString() : 'Неизвестно';
         d.innerHTML = `
-            <div style="color:#fff; font-weight:bold;">${b.name}</div>
+            <div class="r-missing-date">Добавлено: ${dateStrText} ${overdueText}</div>
+            <div style="color:#fff; font-weight:bold;"><a href="/book/${b.id}">${b.name}</a></div>
             <div class="r-missing-actions">
-                <input type="datetime-local" class="r-input quick-date-inp" style="padding:2px; font-size:10px; height:22px;">
+                <input type="datetime-local" class="r-input quick-date-inp" style="padding:2px; font-size:10px; height:22px; width: 110px;">
+                <input type="text" class="r-input quick-chap-inp" placeholder="Главы/auto" style="padding:2px; font-size:10px; height:22px; width:65px; margin:0;" title="Число или auto">
                 <button class="r-btn btn-quick-add" data-id="${b.id}" style="width:auto; margin:0; padding:2px 8px; font-size:11px; background:#28a745;">OK</button>
             </div>
         `;
@@ -720,6 +918,8 @@ function renderMissingReminders() {
         c.appendChild(d);
     });
 }
+document.getElementById('missing_search_inp').onkeyup = renderMissingReminders;
+document.getElementById('missing_sort_sel').onchange = renderMissingReminders;
 
 
 function renderReminders() {
@@ -727,13 +927,21 @@ function renderReminders() {
     const waitContainer = document.getElementById('rem_list_waiting');
     schedContainer.innerHTML = ''; waitContainer.innerHTML = '';
 
-    const scheduled = reminders.filter(r => r.status === 'scheduled').sort((a,b) => new Date(a.time) - new Date(b.time));
-    const waiting = reminders.filter(r => r.status === 'pending');
+    const searchTerm = document.getElementById('rem_search_inp').value.toLowerCase();
+
+    const filterFn = (r) => {
+        if (!searchTerm) return true;
+        const text = r.customText ? r.customText : r.bookName;
+        return text.toLowerCase().includes(searchTerm);
+    };
+
+    const scheduled = reminders.filter(r => r.status === 'scheduled' && filterFn(r)).sort((a,b) => new Date(a.time) - new Date(b.time));
+    // Сортировка по самым просроченным (начиная от самой долгой книги по убыванию)
+    const waiting = reminders.filter(r => r.status === 'pending' && filterFn(r)).sort((a,b) => new Date(a.time) - new Date(b.time));
 
     if (waiting.length) {
         waitContainer.innerHTML = '<div class="r-rem-header">⚠️ Ожидают выполнения</div>';
         waiting.forEach((r) => {
-             const d = document.createElement('div'); d.className = 'r-rem-card wait';
              const realIdx = reminders.findIndex(x => x.id === r.id);
              let contentHtml;
 
@@ -745,9 +953,23 @@ function renderReminders() {
                  contentHtml = `<div style="display: flex; align-items: center;"><a href="/book/${r.bookId}" target="_blank" class="r-rem-name" title="${r.bookName}">${r.bookName}</a>${origLinkHtml}</div>`;
              }
 
+             const timeMs = new Date(r.time).getTime();
+             const daysLate = Math.floor((Date.now() - timeMs) / 86400000);
+             const lateText = daysLate > 0 ? `<span style="color:#ff6b6b; font-weight:bold; margin-left:5px;">(Долг: ${daysLate} дн.)</span>` : '';
+             const severeClass = daysLate > 7 ? ' overdue-severe' : '';
+
+             const chapText = r.chapters === 'auto' ? 'По мере выхода' : (r.chapters || '0');
+             const chapInfo = `<span class="rem-chap-container" style="font-size:10px; color:#17a2b8; margin-left: 5px;">[Главы: ${chapText}] <span class="r-act-btn" style="color:#aaa; padding:0 2px; font-size:10px;" data-action="rem_edit_chaps" data-index="${realIdx}" title="Изменить главы">✏️</span></span>`;
+
+             const d = document.createElement('div');
+             d.className = 'r-rem-card wait' + severeClass;
              d.innerHTML = `
-                 <div style="flex:1; overflow:hidden; display:flex; flex-direction:column;">${contentHtml}<div style="font-size:10px; color:#aaa;">Сработало: ${new Date(r.time).toLocaleTimeString()}</div></div>
-                 <div class="r-rem-act"><span class="r-act-btn" style="color: #17a2b8;" data-action="rem_snooze_pending" data-index="${realIdx}" title="Отложить на 24ч">➡️</span><span class="r-act-btn r-act-restore" data-action="rem_finish" data-index="${realIdx}" title="Выполнено">✅</span></div>
+                 <div style="flex:1; overflow:hidden; display:flex; flex-direction:column;">${contentHtml}<div style="font-size:10px; color:#aaa; margin-top:2px; display:flex; align-items:center;">Сработало: ${new Date(r.time).toLocaleTimeString()} ${lateText} ${chapInfo}</div></div>
+                 <div class="r-rem-act">
+                    <span class="r-act-btn" style="color:#ffc107;" data-action="rem_edit_time" data-index="${realIdx}" title="Перенести дату">📅</span>
+                    <span class="r-act-btn" style="color: #17a2b8;" data-action="rem_snooze_pending" data-index="${realIdx}" title="Отложить на 24ч">➡️</span>
+                    <span class="r-act-btn r-act-restore" data-action="rem_finish" data-index="${realIdx}" title="Выполнено">✅</span>
+                 </div>
              `;
              waitContainer.appendChild(d);
         });
@@ -785,18 +1007,36 @@ function renderReminders() {
                  contentHtml = `<a href="/book/${r.bookId}" target="_blank" class="r-rem-name" title="${r.bookName}">${r.bookName}</a>${origLinkHtml}`;
             }
 
+            const chapText = r.chapters === 'auto' ? 'По мере выхода' : (r.chapters || '0');
+            const chapInfo = `<div class="rem-chap-container" style="font-size:10px; color:#17a2b8; width:100%; margin-top:2px;">Главы: ${chapText} <span class="r-act-btn" style="color:#aaa; padding:0 2px; font-size:10px;" data-action="rem_edit_chaps" data-index="${realIdx}" title="Изменить главы">✏️</span></div>`;
+
             const div = document.createElement('div');
             div.className = 'r-rem-card';
-            div.innerHTML = `<div class="r-rem-time">${dObj.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div><div style="flex:1; overflow:hidden; display:flex; align-items:center;">${contentHtml}</div><span class="r-act-btn r-act-del" data-action="rem_del" data-index="${realIdx}" title="Удалить">✖</span>`;
+            div.innerHTML = `
+                <div class="r-rem-time">${dObj.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</div>
+                <div style="flex:1; overflow:hidden; display:flex; flex-direction:column; justify-content:center;">
+                    <div style="display:flex; align-items:center; width:100%;">${contentHtml}</div>
+                    ${chapInfo}
+                </div>
+                <div class="r-rem-act">
+                    <span class="r-act-btn" style="color:#ffc107;" data-action="rem_edit_time" data-index="${realIdx}" title="Перенести дату/время">📅</span>
+                    <span class="r-act-btn r-act-del" data-action="rem_del" data-index="${realIdx}" title="Удалить">✖</span>
+                </div>
+            `;
             schedContainer.appendChild(div);
         });
     } else if (!waiting.length) {
-        schedContainer.innerHTML = '<div style="text-align:center; color:#777; font-size:12px; margin-top:20px;">Нет напоминаний</div>';
+        schedContainer.innerHTML = '<div style="text-align:center; color:#777; font-size:12px; margin-top:20px;">' + (searchTerm ? 'Ничего не найдено' : 'Нет напоминаний') + '</div>';
     }
 }
+
 document.getElementById('btn_add_rem').onclick = () => {
     const isCustom = document.getElementById('chk_custom_rem').checked;
     const dateVal = document.getElementById('rem_date_inp').value;
+
+    const isAuto = document.getElementById('rem_chap_auto').checked;
+    const chapCount = parseInt(document.getElementById('rem_chap_inp').value) || 0;
+
     if (!dateVal) return alert('Выберите дату и время');
 
     const time = new Date(dateVal).getTime();
@@ -805,7 +1045,8 @@ document.getElementById('btn_add_rem').onclick = () => {
     let newReminder = {
         id: Date.now() + Math.random(),
         time: new Date(dateVal).toISOString(),
-        status: 'scheduled'
+        status: 'scheduled',
+        chapters: isAuto ? 'auto' : (chapCount > 0 ? chapCount : 0)
     };
 
     if (isCustom) {
@@ -827,7 +1068,89 @@ document.getElementById('btn_add_rem').onclick = () => {
     renderReminders();
     document.getElementById('rem_date_inp').value = '';
     document.getElementById('rem_custom_text_inp').value = '';
+    document.getElementById('rem_chap_inp').value = '';
 };
+
+// Отображение Календаря
+function renderCalendar() {
+    const c = document.getElementById('cal_body_container');
+    c.innerHTML = '';
+
+    const days = {};
+    reminders.forEach(r => {
+        const dObj = new Date(r.time);
+        const sortStr = dObj.toISOString().split('T')[0];
+
+        if (!days[sortStr]) {
+            days[sortStr] = { displayDate: dObj.toLocaleDateString(), tasks: [], totalChapters: 0 };
+        }
+
+        let chapsText = 'Не указано';
+        if (r.chapters === 'auto') {
+            chapsText = 'По мере выхода';
+        } else if (r.chapters > 0) {
+            chapsText = r.chapters;
+            days[sortStr].totalChapters += parseInt(r.chapters);
+        } else if (r.chapters === 0) {
+            chapsText = '0';
+        }
+
+        days[sortStr].tasks.push({
+            id: r.id,
+            realIdx: reminders.findIndex(x => x.id === r.id),
+            name: r.customText || r.bookName,
+            time: dObj.toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}),
+            chaps: chapsText,
+            status: r.status
+        });
+    });
+
+    const sortedDates = Object.keys(days).sort();
+    if (sortedDates.length === 0) {
+        c.innerHTML = '<div style="color:#aaa; text-align:center; width:100%; grid-column: 1 / -1;">Нет запланированных задач</div>';
+        return;
+    }
+
+    sortedDates.forEach(date => {
+        const dayData = days[date];
+        let dayClass = 'r-cal-day';
+        if (dayData.totalChapters > 700) dayClass += ' danger';
+        else if (dayData.totalChapters > 400) dayClass += ' warn';
+
+        const dayDiv = document.createElement('div');
+        dayDiv.className = dayClass;
+
+        let tasksHtml = dayData.tasks.map(t => {
+            const style = t.status === 'pending' ? 'border-left-color: #ffc107;' : '';
+            return `<div class="r-cal-task" style="${style}">
+                <b>${t.time}</b>: ${t.name} <br>
+                <div class="cal-chap-container" style="color:#888; display:flex; align-items:center; gap:5px; margin-top:2px;">
+                    <span>Главы: ${t.chaps}</span>
+                    <span class="cal-act-btn" style="cursor:pointer; color:#aaa; font-size:10px;" data-action="cal_edit_chaps" data-index="${t.realIdx}" title="Изменить главы">✏️</span>
+                </div>
+            </div>`;
+        }).join('');
+
+        dayDiv.innerHTML = `
+            <div class="r-cal-date">
+                <span>${dayData.displayDate}</span>
+                <span title="Всего запланированных глав (auto не учитываются)">${dayData.totalChapters > 0 ? dayData.totalChapters + ' гл.' : ''}</span>
+            </div>
+            ${tasksHtml}
+        `;
+        c.appendChild(dayDiv);
+    });
+}
+
+document.getElementById('btn_open_calendar').onclick = () => {
+    renderCalendar();
+    calOverlay.style.display = 'flex';
+};
+
+document.getElementById('btn_close_cal').onclick = () => {
+    calOverlay.style.display = 'none';
+};
+
 function showNotification(rem) {
     notifDiv.style.display = 'block';
     const bodyText = rem.customText ? `<b>${rem.customText}</b>` : `Пора проверить: <br><b>${rem.bookName}</b>`;
@@ -850,6 +1173,7 @@ function showNotification(rem) {
     };
 }
 setInterval(() => {
+    if (reminderOpts.disableNotifications) return;
     const now = Date.now();
     reminders.forEach(r => {
         if (r.status === 'scheduled' && new Date(r.time).getTime() <= now) {
@@ -879,14 +1203,35 @@ document.getElementById('missing_rem_list').addEventListener('click', (e) => {
     if (e.target.classList.contains('btn-quick-add')) {
         const btn = e.target;
         const bookId = btn.dataset.id;
-        const dateInput = btn.previousElementSibling;
+        const dateInput = btn.parentElement.querySelector('.quick-date-inp');
+        const chapInput = btn.parentElement.querySelector('.quick-chap-inp');
+
         const dateVal = dateInput.value;
+        const chapVal = chapInput.value.trim().toLowerCase();
+
         if (!dateVal) return alert('Укажите время');
         const time = new Date(dateVal).getTime();
         if (time < Date.now()) return alert('Время в прошлом!');
+
+        let finalChaps = 0;
+        if (chapVal === 'auto' || chapVal === 'ауто' || chapVal === 'авто') {
+            finalChaps = 'auto';
+        } else if (parseInt(chapVal) > 0) {
+            finalChaps = parseInt(chapVal);
+        }
+
         const book = savedBooks.find(b => String(b.id) === String(bookId));
         if (!book) return;
-        reminders.push({ id: Date.now() + Math.random(), time: new Date(dateVal).toISOString(), status: 'scheduled', bookId: book.id, bookName: book.name });
+
+        reminders.push({
+            id: Date.now() + Math.random(),
+            time: new Date(dateVal).toISOString(),
+            status: 'scheduled',
+            bookId: book.id,
+            bookName: book.name,
+            chapters: finalChaps
+        });
+
         localStorage.setItem(KEYS.REMINDERS, JSON.stringify(reminders));
         renderReminders();
         renderMissingReminders();
@@ -1138,14 +1483,12 @@ document.getElementById('btn_toggle').onclick = (e) => {
 };
 
 function switchTab(id){
-    // Removed tab3 and tab6 from arrays
     ['tab1','tab2','tab4','tab5','tab7','tab8','tab_data'].forEach(t=>{document.getElementById(t).classList.remove('active');});
     ['content1','content2','content4','content5','content7','content8','content_data'].forEach(c=>{document.getElementById(c).classList.remove('active');});
 
     const at=document.getElementById(id);
     at.classList.add('active');
 
-    // Logic to find content ID
     let contentId = '';
     if(id === 'tab_data') contentId = 'content_data';
     else contentId = 'content' + id.replace('tab','');
@@ -1154,14 +1497,14 @@ function switchTab(id){
 }
 ['tab1','tab2','tab4','tab5','tab7','tab8','tab_data'].forEach(t=>document.getElementById(t).onclick=()=>switchTab(t));
 
-document.getElementById('btn_settings').onclick=(e)=>{e.stopPropagation();isMenuOpen=!isMenuOpen;menuDiv.style.display=isMenuOpen?'block':'none';if(isMenuOpen){renderBookList();renderBlockList();updateSimSelect();renderAdBookList();renderPresets();updateRemSelect();renderReminders();}};
+document.getElementById('btn_settings').onclick=(e)=>{e.stopPropagation();isMenuOpen=!isMenuOpen;menuDiv.style.display=isMenuOpen?'block':'none';if(isMenuOpen){renderBookList();renderBlockList();updateSimSelect();updateAdListSearch();renderPresets();updateRemSelect();renderReminders();}};
 document.getElementById('inp_timer').onchange=(e)=>{waitSeconds=parseInt(e.target.value)||5;localStorage.setItem(KEYS.TIMER,waitSeconds);secondsLeft=waitSeconds;updateVisuals();};
 
 document.getElementById('chk_autolike_book').onchange=(e)=>{isAutoLikeBookActive=e.target.checked;localStorage.setItem(KEYS.AUTO_LIKE_BOOK,JSON.stringify(isAutoLikeBookActive));};
 document.getElementById('chk_autolike_chapter').onchange=(e)=>{isAutoLikeChapterActive=e.target.checked;localStorage.setItem(KEYS.AUTO_LIKE_CHAPTER,JSON.stringify(isAutoLikeChapterActive));};
 
-document.getElementById('btn_add').onclick=()=>{const id=document.getElementById('inp_id').value, n=document.getElementById('inp_name').value||`Book #${id}`; if(id){savedBooks.push({id,name:n, originalUrl: ''});localStorage.setItem(KEYS.BOOKS,JSON.stringify(savedBooks));renderBookList();updateSimSelect();renderAdBookList();updateRemSelect();}};
-document.getElementById('btn_add_curr').onclick=()=>{const p=location.pathname.split('/'); if(p[1]=='book'&&p[2]){let t=`Book #${p[2]}`;const h=document.querySelector('h1');if(h){const c=h.cloneNode(true);if(c.querySelector('small'))c.querySelector('small').remove();t=c.innerText.trim();}savedBooks.push({id:p[2],name:t, originalUrl: ''});localStorage.setItem(KEYS.BOOKS,JSON.stringify(savedBooks));renderBookList();updateSimSelect();renderAdBookList();updateRemSelect();}};
+document.getElementById('btn_add').onclick=()=>{const id=document.getElementById('inp_id').value, n=document.getElementById('inp_name').value||`Book #${id}`; if(id){savedBooks.push({id,name:n, originalUrl: '', dateAdded: Date.now()});localStorage.setItem(KEYS.BOOKS,JSON.stringify(savedBooks));renderBookList();updateSimSelect();updateAdListSearch();updateRemSelect();}};
+document.getElementById('btn_add_curr').onclick=()=>{const p=location.pathname.split('/'); if(p[1]=='book'&&p[2]){let t=`Book #${p[2]}`;const h=document.querySelector('h1');if(h){const c=h.cloneNode(true);if(c.querySelector('small'))c.querySelector('small').remove();t=c.innerText.trim();}savedBooks.push({id:p[2],name:t, originalUrl: '', dateAdded: Date.now()});localStorage.setItem(KEYS.BOOKS,JSON.stringify(savedBooks));renderBookList();updateSimSelect();updateAdListSearch();updateRemSelect();}};
 
 document.getElementById('btn_start_sim').onclick=()=>{
     if(!savedBooks.length)return alert('Пусто');
@@ -1192,7 +1535,7 @@ document.getElementById('btn_mass_bm').onclick=()=>doMass('bm');
 document.getElementById('btn_mass_unread').onclick=()=>doMass('remove_last_readed');
 document.getElementById('btn_sel_all').onclick=()=>{document.querySelectorAll('.book-sel').forEach(e=>{e.checked=true;toggleCheck(e.dataset.id,true);});};
 document.getElementById('btn_desel_all').onclick=()=>{document.querySelectorAll('.book-sel').forEach(e=>{e.checked=false;toggleCheck(e.dataset.id,false);});};
-
+document.getElementById('rem_search_inp').onkeyup = renderReminders;
 // ==========================================
 // 5. ГЕНЕРАТОР РЕКЛАМЫ (PRO)
 // ==========================================
